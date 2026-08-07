@@ -19,16 +19,16 @@ __pycache__/
 *.tiff
 *.webp
 
-# SAM3 Submodule / Directory
+# Data & Log Directories
+data/
+data/**
+logs/
+
+# SAM3 Method
 methods/sam3/
 sam3/
-
-# Generated Data & Outputs
-data/converted/
-data/checkpoints/
-data/outputs/
-logs/*.log
 
 # Local Editor / OS Files
 .DS_Store
 Thumbs.db
+.vscode/

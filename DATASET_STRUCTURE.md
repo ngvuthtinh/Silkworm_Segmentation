@@ -10,7 +10,7 @@ Silkworm_Segmentation/
 │   │   ├── boundary_pipeline.py      # Label prep, training, and single-image inference CLI
 │   │   ├── instance_pipeline.py      # Modular 4-step instance segmentation engine
 │   │   └── interactive_viewer.py     # Interactive GUI / terminal inference viewer
-│   └── sam3/                         # SAM3 method repository
+│   └── box_guided_watershed/         # Box-Guided Watershed method
 ├── utils/
 │   └── yolo_bbox_to_masks.py         # Converter for YOLO bbox annotations to masks & boundaries
 ├── data/
