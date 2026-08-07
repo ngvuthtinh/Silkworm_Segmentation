@@ -1,7 +1,0 @@
-path: f:/Repositories/Silkworm_Anomaly_Detection/data/Silkworm Diseases.v1i.yolo26
-train: train/images
-val: valid/images
-test: test/images
-
-nc: 2
-names: ['Grasserie', 'Healthy']
