@@ -1,16 +1,73 @@
+# ==========================================
+# Python Environment & Cache
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
 __pycache__/
-*.pyc
-*.pyo
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
 
+# ==========================================
+# Datasets & Data Folders
+# ==========================================
+data/
+**/data/
+datasets/
+**/datasets/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# ==========================================
 # Model Checkpoints & Weights
+# ==========================================
 *.pth
 *.pt
+*.ckpt
 *.onnx
 *.safetensors
 *.bin
-*.ckpt
+*.pb
+*.h5
+*.tflite
+*.pth.tar
+*.weights
+*.engine
 
+# ==========================================
+# Logs, Results & Training Outputs
+# ==========================================
+logs/
+**/logs/
+results/
+**/results/
+runs/
+**/runs/
+visualizations/
+**/visualizations/
+outputs/
+**/outputs/
+wandb/
+**/wandb/
+*.log
+
+# ==========================================
 # Image Formats & Outputs
+# ==========================================
 *.png
 *.jpg
 *.jpeg
@@ -19,16 +76,20 @@ __pycache__/
 *.tiff
 *.webp
 
-# Data & Log Directories
-data/
-data/**
-logs/
-
-# SAM3 Method
-methods/sam3/
-sam3/
-
-# Local Editor / OS Files
+# ==========================================
+# Local Editor & OS Files
+# ==========================================
 .DS_Store
 Thumbs.db
+desktop.ini
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Special / Ignored External Methods
+# ==========================================
+methods/sam3/
+sam3/
