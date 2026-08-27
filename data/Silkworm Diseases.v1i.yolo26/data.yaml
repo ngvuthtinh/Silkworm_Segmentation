@@ -1,0 +1,7 @@
+path: data/Silkworm Diseases.v1i.yolo26
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names: ['Grasserie', 'Healthy']

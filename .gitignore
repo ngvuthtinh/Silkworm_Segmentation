@@ -19,12 +19,12 @@ dist/
 build/
 
 # ==========================================
-# Datasets & Data Folders
+# Datasets & Data Folders (Un-comment if ignoring)
 # ==========================================
-data/
-**/data/
-datasets/
-**/datasets/
+# data/
+# **/data/
+# datasets/
+# **/datasets/
 *.zip
 *.tar
 *.tar.gz
@@ -66,15 +66,15 @@ wandb/
 *.log
 
 # ==========================================
-# Image Formats & Outputs
+# Image Formats & Outputs (Commented out to allow dataset image tracking)
 # ==========================================
-*.png
-*.jpg
-*.jpeg
-*.bmp
-*.tif
-*.tiff
-*.webp
+# *.png
+# *.jpg
+# *.jpeg
+# *.bmp
+# *.tif
+# *.tiff
+# *.webp
 
 # ==========================================
 # Local Editor & OS Files
