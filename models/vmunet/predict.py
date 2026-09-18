@@ -29,10 +29,16 @@ def main():
     parser.add_argument("--mask-dir", type=str, default=None, help="Directory containing ground truth masks (optional)")
     parser.add_argument("--output-dir", type=str, default=None, help="Directory to save output visualizations")
     parser.add_argument("--max-images", type=int, default=20, help="Maximum number of images to process")
+    parser.add_argument("--gpu", type=str, default="0", help="GPU index to use")
     args = parser.parse_args()
 
     config = setting_config()
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        gpu_idx = int(args.gpu) if args.gpu.isdigit() else 0
+        device = torch.device(f"cuda:{gpu_idx}")
+        torch.cuda.set_device(device)
+    else:
+        device = torch.device("cpu")
 
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
     checkpoint_path = find_best_checkpoint(results_dir)

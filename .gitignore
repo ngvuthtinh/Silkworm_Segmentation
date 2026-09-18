@@ -19,12 +19,25 @@ dist/
 build/
 
 # ==========================================
-# Datasets & Data Folders (Un-comment if ignoring)
+# Datasets & Data Folders
 # ==========================================
-# data/
-# **/data/
-# datasets/
-# **/datasets/
+data/
+**/data/
+!models/silkynet/data/
+!models/silkynet/data/**
+!models/vmunet/data/
+!models/vmunet/data/**
+datasets/
+**/datasets/
+!models/vmunet/datasets/
+!models/vmunet/datasets/**
+checkpoints/
+**/checkpoints/
+data/Silkworm_SAM3_Segmented/
+**/Silkworm_SAM3_Segmented/
+**/silkworm_sam3_segmented/
+**/silkworm_mixed_dataset/
+
 *.zip
 *.tar
 *.tar.gz
@@ -43,6 +56,9 @@ build/
 *.bin
 *.pb
 *.h5
+*.hdf5
+*.npz
+*.npy
 *.tflite
 *.pth.tar
 *.weights
