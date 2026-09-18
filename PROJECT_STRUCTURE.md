@@ -81,18 +81,27 @@ except ImportError:
 ```
 experiments/
 ├── segfirst_vmunet/          # Thử nghiệm: VM-UNet + 2-phase training
-│   ├── config.yaml           #   ← QUAN TRỌNG: mọi hyperparameter ở đây
+│   ├── config.py             #   ← Mọi hyperparameter ở đây
 │   ├── model.py              #   ← Wrap models/vmunet vào bài toán silkworm
 │   ├── train.py              #   ← Script train (gọi src/ + model.py)
 │   ├── evaluate.py           #   ← Script đánh giá
-│   ├── losses.py             #   ← (tuỳ chọn) loss riêng, ghi đè src/losses.py
+│   ├── inference.py          #   ← Script dự đoán & trực quan hóa
 │   └── notes.md              #   ← Ghi chú thử nghiệm, kết quả, nhận xét
 │
-└── segfirst_swinunet/        # Thử nghiệm: Swin-UNet + 2-phase training
-    ├── config.yaml
+├── segfirst_swinunet/        # Thử nghiệm: Swin-UNet + 2-phase training
+│   ├── config.py
+│   ├── model.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── inference.py
+│   └── notes.md
+│
+└── multitask_vmunet/         # Thử nghiệm: VM-UNet Multi-Task đồng thời (Joint)
+    ├── config.py
     ├── model.py
     ├── train.py
-    └── notes.md              # (không có losses.py → tự dùng src/losses.py)
+    ├── inference.py
+    └── notes.md
 ```
 
 ### 📄 Ví dụ `config.yaml`

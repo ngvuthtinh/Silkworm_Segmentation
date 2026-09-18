@@ -1,9 +1,12 @@
 """
-train.py — Two-Phase Training Script for Segmentation-First Multi-Task Swin-Unet.
+train.py — Two-Phase Training Pipeline for Segmentation-First Multi-Task Swin-Unet.
 
-Phase 1: Segmentation Pre-training on Dataset A until stable.
-Phase 2: Multi-Task Fine-Tuning on Dataset A (Seg) & Dataset B (Cls) with differential
-         learning rates (lr_backbone=1e-5, lr_seg=1e-4, lr_cls=1e-3) and low lambda_cls=0.1.
+Strategy:
+  Phase 1: Pure segmentation pre-training on silkworm mask data.
+  Phase 2: Multi-task fine-tuning with differential learning rates:
+           - Small LR on backbone (preserve learned representations)
+           - Standard LR on segmentation head
+           - Higher LR on classification head
 """
 
 from __future__ import annotations
@@ -22,15 +25,17 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
+# Resolve project root
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT))
-sys.path.insert(0, str(_HERE))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import SegFirstSwinConfig
-from dataset import SilkynetSegDataset, YOLOClsDataset
-from losses import SegFirstMultiTaskLoss
-from model import SegFirstSwinUnet
+from src.dataset import SilkynetSegDataset, YOLOClsDataset
+from src.losses import SegFirstMultiTaskLoss
+from src.metrics import evaluate_seg, evaluate_cls
+from experiments.segfirst_swinunet.config import SegFirstSwinConfig
+from experiments.segfirst_swinunet.model import SegFirstSwinUnet
 
 
 def set_seed(seed: int = 42) -> None:
@@ -41,62 +46,7 @@ def set_seed(seed: int = 42) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def evaluate_seg(
-    model: nn.Module, loader: DataLoader, device: torch.device, threshold: float = 0.5
-) -> tuple[float, float]:
-    """Evaluate segmentation accuracy (mIoU and Dice Score)."""
-    model.eval()
-    ious, dices = [], []
-
-    with torch.no_grad():
-        for imgs, masks in loader:
-            imgs, masks = imgs.to(device), masks.to(device)
-            mask_logits, _ = model(imgs, phase=1)
-            mask_pred = torch.sigmoid(mask_logits)
-
-            pred_bin = (mask_pred >= threshold).float()
-            intersection = (pred_bin * masks).sum(dim=[1, 2, 3])
-            union = pred_bin.sum(dim=[1, 2, 3]) + masks.sum(dim=[1, 2, 3]) - intersection
-
-            iou = (intersection + 1e-6) / (union + 1e-6)
-            dice = (2.0 * intersection + 1e-6) / (
-                pred_bin.sum(dim=[1, 2, 3]) + masks.sum(dim=[1, 2, 3]) + 1e-6
-            )
-
-            ious.extend(iou.cpu().tolist())
-            dices.extend(dice.cpu().tolist())
-
-    return float(np.mean(ious)), float(np.mean(dices))
-
-
-def evaluate_cls(
-    model: nn.Module, loader: DataLoader, device: torch.device
-) -> tuple[float, float]:
-    """Evaluate classification accuracy."""
-    model.eval()
-    correct, total = 0, 0
-    total_loss = 0.0
-    ce = nn.CrossEntropyLoss()
-
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs, labels = imgs.to(device), labels.to(device)
-            _, class_logits = model(imgs, phase=2)
-
-            loss = ce(class_logits, labels)
-            total_loss += loss.item() * len(labels)
-
-            preds = class_logits.argmax(dim=1)
-            correct += (preds == labels).sum().item()
-            total += len(labels)
-
-    acc = correct / max(1, total)
-    loss = total_loss / max(1, total)
-    return float(acc), float(loss)
-
-
 def train(cfg: SegFirstSwinConfig) -> None:
-    # Setup Device
     if torch.cuda.is_available():
         if cfg.gpu_id.lower() == "auto":
             best_gpu, max_free_mem = 0, -1

@@ -21,15 +21,14 @@ import numpy as np
 from PIL import Image
 import torch
 import torchvision.transforms as T
-import torchvision.transforms.functional as TF
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT))
-sys.path.insert(0, str(_HERE))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import SegFirstSwinConfig
-from model import SegFirstSwinUnet
+from experiments.segfirst_swinunet.config import SegFirstSwinConfig
+from experiments.segfirst_swinunet.model import SegFirstSwinUnet
 
 CLASS_NAMES = {0: "Healthy", 1: "Diseased"}
 
@@ -73,45 +72,39 @@ def run_inference(
         orig_w, orig_h = img_pil.size
 
         # Preprocess
-        img_resized = TF.resize(img_pil, [img_size, img_size], interpolation=TF.InterpolationMode.BILINEAR)
-        tensor = norm(TF.to_tensor(img_resized)).unsqueeze(0).to(device)
+        img_resized = img_pil.resize((img_size, img_size), Image.BILINEAR)
+        img_arr = np.array(img_resized, dtype=np.float32) / 255.0
+        tensor = norm(torch.from_numpy(img_arr.transpose(2, 0, 1))).unsqueeze(0).to(device)
 
         with torch.no_grad():
             mask_logits, class_logits = model(tensor, phase=2)
             mask_pred = torch.sigmoid(mask_logits)
 
-        # Process segmentation prediction
         prob = mask_pred.squeeze().cpu().numpy()
         prob_full = np.array(
             Image.fromarray((prob * 255).astype(np.uint8)).resize((orig_w, orig_h), Image.BILINEAR)
         ) / 255.0
         mask_bin = (prob_full >= 0.5).astype(np.uint8)
 
-        # Process classification prediction
         if class_logits is not None:
             cls_probs = torch.softmax(class_logits, dim=1).squeeze().cpu().numpy()
             cls_pred = int(np.argmax(cls_probs))
             cls_conf = float(cls_probs[cls_pred])
-            cls_label = f"{CLASS_NAMES[cls_pred]}\n({cls_conf*100:.1f}%)"
+            cls_label = f"{CLASS_NAMES[cls_pred]} ({cls_conf*100:.1f}%)"
         else:
-            cls_pred = 0
             cls_label = "N/A"
 
-        # Create 4-panel visualization
         fig, axes = plt.subplots(1, 4, figsize=(20, 5))
         img_np = np.array(img_pil)
 
-        # Panel 1: Original Image
         axes[0].imshow(img_np)
         axes[0].set_title(f"Input: {Path(img_p).name[:20]}", fontsize=11)
         axes[0].axis("off")
 
-        # Panel 2: Predicted Mask
         axes[1].imshow(mask_bin, cmap="gray")
         axes[1].set_title(f"Predicted Mask (Coverage={mask_bin.mean():.1%})", fontsize=11)
         axes[1].axis("off")
 
-        # Panel 3: Purple Overlay
         overlay = img_np.copy()
         color_purple = np.array([255, 0, 255], dtype=np.float32)
         for c in range(3):
@@ -122,8 +115,6 @@ def run_inference(
         axes[2].set_title("SegFirst Swin-Unet Segment", fontsize=11, color="purple", fontweight="bold")
         axes[2].axis("off")
 
-        # Panel 4: Health Status Classification Badge
-        badge_color = "green" if cls_pred == 0 else "red"
         axes[3].text(
             0.5,
             0.5,
@@ -132,7 +123,7 @@ def run_inference(
             fontweight="bold",
             ha="center",
             va="center",
-            color=badge_color,
+            color="green" if cls_pred == 0 else "red",
             transform=axes[3].transAxes,
         )
         axes[3].set_title("Classification Prediction", fontsize=11)
@@ -143,24 +134,25 @@ def run_inference(
         plt.savefig(save_p, dpi=150, bbox_inches="tight")
         plt.close()
 
-        print(f"  [{idx:02d}/{len(img_paths)}] {Path(img_p).name} -> Mask Coverage={mask_bin.mean():.1%} | Health={CLASS_NAMES[cls_pred]}")
+        print(f"  [{idx:02d}/{len(img_paths)}] {Path(img_p).name} -> Coverage={mask_bin.mean():.1%} | Health={cls_label}")
 
     print(f"\n[INFO] Inference completed! Visualizations saved to: {output_dir}")
 
 
 def main():
     p = argparse.ArgumentParser(description="SegFirst Multi-Task Swin-Unet Inference")
-    p.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint .pth")
-    p.add_argument("--image-dir", type=str, default="data/silkworm_mixed_dataset/test/images")
-    p.add_argument("--output-dir", type=str, default="methods/segfirst_multitask_swinunet/results/inference_output")
-    p.add_argument("--pattern", type=str, default="*")
+    p.add_argument("--checkpoint", type=str, default="runs/segfirst_swinunet/2026-09-17_run1/checkpoints/phase2_best.pth", help="Path to model checkpoint .pth")
+    p.add_argument("--image-dir", type=str, default="models/silkynet/data/larvaTest/img")
+    p.add_argument("--output-dir", type=str, default="runs/segfirst_swinunet/inference_output")
+    p.add_argument("--pattern", type=str, default="*", help="Filename pattern to filter, e.g. Healthy*")
     p.add_argument("--max-images", type=int, default=10)
+    p.add_argument("--input-size", type=int, default=224)
     p.add_argument("--gpu", type=str, default="0")
     args = p.parse_args()
 
-    imgs = sorted(glob.glob(os.path.join(args.image_dir, f"{args.pattern}.jpg"))) + sorted(
-        glob.glob(os.path.join(args.image_dir, f"{args.pattern}.png"))
-    )
+    pattern_jpg = f"{args.pattern}.jpg" if not args.pattern.endswith(".jpg") else args.pattern
+    pattern_png = f"{args.pattern}.png" if not args.pattern.endswith(".png") else args.pattern
+    imgs = sorted(glob.glob(os.path.join(args.image_dir, pattern_jpg))) + sorted(glob.glob(os.path.join(args.image_dir, pattern_png)))
     if args.max_images > 0 and len(imgs) > args.max_images:
         imgs = imgs[: args.max_images]
 
@@ -168,6 +160,7 @@ def main():
         model_path=args.checkpoint,
         img_paths=imgs,
         output_dir=args.output_dir,
+        img_size=args.input_size,
         gpu_id=args.gpu,
     )
 

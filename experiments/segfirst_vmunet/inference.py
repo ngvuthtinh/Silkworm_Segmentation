@@ -22,15 +22,13 @@ from PIL import Image
 import torch
 import torchvision.transforms as T
 
-# Resolve paths
+# Resolve project root
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT))
-sys.path.insert(0, str(_HERE))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import SegFirstConfig
-from model import SegFirstVMUNet
-
+from experiments.segfirst_vmunet.model import SegFirstVMUNet
 
 CLASS_NAMES = {0: "Healthy", 1: "Diseased"}
 
@@ -118,7 +116,7 @@ def run_inference(
             overlay[:, :, c] = np.where(
                 mask_bin == 1, overlay[:, :, c] * 0.5 + color_purple[c] * 0.5, overlay[:, :, c]
             )
-        axes[3 if class_logits is None else 2].imshow(overlay)
+        axes[2].imshow(overlay)
         axes[2].set_title("SegFirst VM-UNet Segment", fontsize=11, color="purple", fontweight="bold")
         axes[2].axis("off")
 
@@ -149,7 +147,7 @@ def run_inference(
 
 def main():
     p = argparse.ArgumentParser(description="SegFirst Multi-Task VM-UNet Inference")
-    p.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint .pth")
+    p.add_argument("--checkpoint", type=str, default="runs/segfirst_vmunet/2026-09-17_run4/checkpoints/phase2_best.pth", help="Path to model checkpoint .pth")
     p.add_argument("--image-dir", type=str, default="models/silkynet/data/larvaTest/img")
     p.add_argument("--output-dir", type=str, default="runs/segfirst_vmunet/inference_output")
     p.add_argument("--pattern", type=str, default="*", help="Filename pattern to filter, e.g. Healthy*")

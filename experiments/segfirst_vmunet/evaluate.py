@@ -1,5 +1,5 @@
 """
-evaluate_test.py — Comprehensive Test Evaluation & Visualization for SegFirst Multi-Task VM-UNet.
+evaluate.py — Comprehensive Test Evaluation & Visualization for SegFirst Multi-Task VM-UNet.
 
 Evaluates the model on:
   1. Single-silkworm test subset (100 images from SAM3)
@@ -20,21 +20,20 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
 import torch
 import torch.nn.functional as F
-from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
 from tqdm import tqdm
 
-# Resolve paths
+# Resolve project root
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT))
-sys.path.insert(0, str(_HERE))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import SegFirstConfig
-from model import SegFirstVMUNet
+from experiments.segfirst_vmunet.model import SegFirstVMUNet
 
 CLASS_NAMES = {0: "Healthy", 1: "Diseased"}
 
@@ -82,7 +81,7 @@ class TestEvaluationDataset(Dataset):
             lbl_p = self.lbl_dir / f"{stem}.txt"
 
             is_single = "healthy" in stem.lower() or "grasserie" in stem.lower()
-            
+
             # Extract ground truth class if available from filename or label file
             gt_class = None
             if "healthy" in stem.lower():
@@ -176,7 +175,7 @@ def save_visualization(
     ) > 0
 
     fig, axes = plt.subplots(1, 4, figsize=(18, 5))
-    
+
     # 1. Original Image
     axes[0].imshow(orig_img)
     axes[0].set_title(f"Original Image\nGT: {gt_cls_name}", fontsize=12, fontweight="bold")
@@ -199,7 +198,6 @@ def save_visualization(
 
     # 4. Color Overlay
     overlay = orig_img.copy().astype(np.float32) / 255.0
-    # Purple/Cyan overlay for silkworm segmentation
     overlay[pred_mask_resized, 0] = overlay[pred_mask_resized, 0] * 0.4 + 0.6
     overlay[pred_mask_resized, 1] = overlay[pred_mask_resized, 1] * 0.4 + 0.1
     overlay[pred_mask_resized, 2] = overlay[pred_mask_resized, 2] * 0.4 + 0.8
@@ -294,25 +292,20 @@ def main():
             is_single = item["is_single"][0].item()
             gt_class = item["gt_class"][0].item()
 
-            # Resize pred_bin to match ground truth dimensions for evaluation
             h, w = orig_mask.shape[:2]
             pred_bin_full = np.array(
                 Image.fromarray((pred_bin * 255).astype(np.uint8)).resize((w, h), Image.NEAREST)
             ) > 0
 
-            # Compute segmentation metrics
             m = compute_metrics(pred_bin_full, orig_mask > 0)
-            
-            # Store in 'all'
+
             for k in ["dice", "iou", "precision", "recall"]:
                 results["all"][k].append(m[k])
 
-            # Store in subset
             subset_key = "single" if is_single else "multi"
             for k in ["dice", "iou", "precision", "recall"]:
                 results[subset_key][k].append(m[k])
 
-            # Classification prediction
             pred_cls_name = "N/A"
             pred_cls_conf = 0.0
             if class_logits is not None:
@@ -330,7 +323,6 @@ def main():
 
             gt_cls_name = CLASS_NAMES[gt_class] if gt_class in [0, 1] else "Unknown"
 
-            # Save sample visualizations
             if is_single and saved_single_count < args.save_vis_count:
                 save_visualization(
                     vis_single_dir / f"single_{saved_single_count:02d}_{stem}.png",
@@ -358,7 +350,6 @@ def main():
                 )
                 saved_multi_count += 1
 
-    # Summarize Metrics
     summary = {}
     for grp in ["single", "multi", "all"]:
         summary[grp] = {
@@ -382,11 +373,9 @@ def main():
         "correct": cls_eval["correct"],
     }
 
-    # Save summary JSON
     with open(out_dir / "test_metrics_summary.json", "w") as f:
         json.dump(summary, f, indent=4)
 
-    # Print Formatted Report
     print("\n" + "=" * 70)
     print("         EVALUATION RESULTS SUMMARY (TEST DATASET)")
     print("=" * 70)

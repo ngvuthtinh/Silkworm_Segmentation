@@ -40,11 +40,26 @@ Silkworm_Segmentation/
 │   └── metrics.py           #   Metrics (Dice, IoU, Accuracy, F1)
 │
 ├── experiments/             # [TẦNG 3] Code thử nghiệm (Configs + Wrappers)
-│   └── segfirst_vmunet/     #   Thử nghiệm VM-UNet Segmentation-First
-│       ├── config.py        #     Cấu hình siêu tham số (hyperparameters)
-│       ├── model.py         #     Wrapper kết nối models/vmunet với multi-task head
-│       ├── train.py         #     Pipeline huấn luyện 2 pha
-│       └── notes.md         #     Ghi chú thử nghiệm
+│   ├── segfirst_vmunet/     #   Thử nghiệm VM-UNet Segmentation-First
+│   │   ├── config.py        #     Cấu hình siêu tham số (hyperparameters)
+│   │   ├── model.py         #     Wrapper kết nối models/vmunet với multi-task head
+│   │   ├── train.py         #     Pipeline huấn luyện 2 pha
+│   │   ├── evaluate.py      #     Đánh giá trên tập test
+│   │   ├── inference.py     #     Dự đoán & trực quan hóa
+│   │   └── notes.md         #     Ghi chú thử nghiệm
+│   │
+│   ├── segfirst_swinunet/   #   Thử nghiệm Swin-UNet Segmentation-First
+│   │   ├── config.py
+│   │   ├── model.py
+│   │   ├── train.py
+│   │   ├── evaluate.py
+│   │   └── inference.py
+│   │
+│   └── multitask_vmunet/    #   Thử nghiệm VM-UNet Multi-Task đồng thời (Joint)
+│       ├── config.py
+│       ├── model.py
+│       ├── train.py
+│       └── inference.py
 │
 ├── runs/                    # [TẦNG 4] Toàn bộ kết quả tự sinh ra khi train
 │   ├── segfirst_vmunet/     #   Checkpoints & logs của VM-UNet (theo timestamp/run)
@@ -57,7 +72,6 @@ Silkworm_Segmentation/
 │   ├── Silkworm_SAM3_Segmented/      # SAM 3 generated masks
 │   └── silkworm_mixed_dataset/       # Mixed multi-task dataset
 │
-├── methods/                 # Code thử nghiệm & script độc lập
 └── utils/                   # Công cụ tiền xử lý & sinh nhãn
     ├── sam3_label_from_yolo.py
     └── yolo_bbox_to_masks.py
@@ -97,23 +111,31 @@ python utils/sam3_label_from_yolo.py \
     --prompt "silkworm"
 ```
 
-### 2. Huấn luyện SegFirst VM-UNet (Recommended)
-Chạy pipeline huấn luyện 2 pha (Phase 1: Segmentation Pretrain → Phase 2: Multi-task Fine-tune):
+### 2. Huấn luyện các thử nghiệm (Experiments)
+- Huấn luyện **SegFirst VM-UNet** (2 pha: Segmentation Pretrain → Multi-task Fine-tune):
 ```bash
 python -m experiments.segfirst_vmunet.train
 ```
-*Kết quả checkpoint, log và ảnh sample sẽ tự động được lưu vào `runs/segfirst_vmunet/<timestamp>_runX/`.*
+- Huấn luyện **SegFirst Swin-UNet**:
+```bash
+python -m experiments.segfirst_swinunet.train
+```
+- Huấn luyện **Joint Multi-Task VM-UNet**:
+```bash
+python -m experiments.multitask_vmunet.train
+```
+*Kết quả checkpoint, log và ảnh sample sẽ tự động được lưu vào `runs/<tên_thử_nghiệm>/<timestamp>/`.*
 
 ### 3. Đánh giá hoặc Inference
 Đánh giá checkpoint đã huấn luyện trên tập test:
 ```bash
-python methods/segfirst_multitask_vmunet/evaluate_test.py \
+python -m experiments.segfirst_vmunet.evaluate \
     --checkpoint runs/segfirst_vmunet/2026-09-17_run4/checkpoints/phase2_best.pth
 ```
 
 Chạy inference trên thư mục ảnh thực tế:
 ```bash
-python methods/segfirst_multitask_vmunet/inference.py \
+python -m experiments.segfirst_vmunet.inference \
     --checkpoint runs/segfirst_vmunet/2026-09-17_run4/checkpoints/phase2_best.pth \
     --image-dir data/test/ \
     --output-dir runs/segfirst_vmunet/inference_output/

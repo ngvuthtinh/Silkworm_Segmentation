@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-eval_yolo_single_silkworms.py — Benchmark VM-UNet model on YOLO single silkworm test set.
-Evaluates SegFirst Multi-Task VM-UNet on data/Silkworm Diseases.v1i.yolo26/test (498 samples).
+evaluate.py — Benchmark Swin-Unet models on YOLO single silkworm test set.
 """
 
 from __future__ import annotations
@@ -18,25 +17,48 @@ import numpy as np
 from PIL import Image
 import torch
 import torchvision.transforms as T
+import torchvision.transforms.functional as TF
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT))
-sys.path.insert(0, str(_HERE))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config import SegFirstConfig
-from model import SegFirstVMUNet
+from experiments.segfirst_swinunet.config import SegFirstSwinConfig
+from experiments.segfirst_swinunet.model import SegFirstSwinUnet
 
 CLASS_NAMES = {0: "Healthy", 1: "Grasserie"}
 
 
-def load_model(ckpt_path: str, device: torch.device, img_size: int = 128) -> torch.nn.Module:
-    model = SegFirstVMUNet(input_channels=3, num_seg_classes=1, num_cls_classes=2).to(device)
+def load_model(ckpt_path: str, device: torch.device, img_size: int = 224) -> tuple[torch.nn.Module, int]:
     ckpt = torch.load(ckpt_path, map_location=device)
-    state = ckpt.get("model", ckpt)
-    model.load_state_dict(state, strict=False)
+    if isinstance(ckpt, dict) and "model_state_dict" in ckpt:
+        state = ckpt["model_state_dict"]
+    elif isinstance(ckpt, dict) and "model" in ckpt:
+        state = ckpt["model"]
+    else:
+        state = ckpt
+
+    cleaned_state = {}
+    for k, v in state.items():
+        clean_k = k.replace("module.", "")
+        cleaned_state[clean_k] = v
+
+    num_seg_classes = 1
+    if "swin_unet.output.weight" in cleaned_state:
+        num_seg_classes = cleaned_state["swin_unet.output.weight"].shape[0]
+
+    cfg = SegFirstSwinConfig(input_size=img_size, num_seg_classes=num_seg_classes)
+    model = SegFirstSwinUnet(
+        config=cfg,
+        input_size=img_size,
+        num_seg_classes=num_seg_classes,
+        num_cls_classes=2,
+    ).to(device)
+
+    model.load_state_dict(cleaned_state, strict=False)
     model.eval()
-    return model
+    return model, num_seg_classes
 
 
 def parse_yolo_annotation(txt_path: str, orig_w: int, orig_h: int) -> tuple[int, list[list[int]], np.ndarray]:
@@ -86,9 +108,10 @@ def mask_to_bbox(mask: np.ndarray) -> list[int] | None:
 
 def evaluate_model(
     model: torch.nn.Module,
+    num_seg_classes: int,
     test_items: list[tuple[str, str, int]],
     device: torch.device,
-    img_size: int = 128,
+    img_size: int = 224,
 ) -> tuple[dict, list[dict]]:
     norm = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
@@ -109,14 +132,16 @@ def evaluate_model(
         if gt_cls is None:
             gt_cls = fallback_cls
 
-        img_resized = img_pil.resize((img_size, img_size), Image.BILINEAR)
-        img_arr = np.array(img_resized, dtype=np.float32) / 255.0
-        tensor = norm(torch.from_numpy(img_arr.transpose(2, 0, 1))).unsqueeze(0).to(device)
+        img_resized = TF.resize(img_pil, [img_size, img_size], interpolation=TF.InterpolationMode.BILINEAR)
+        tensor = norm(TF.to_tensor(img_resized)).unsqueeze(0).to(device)
 
         t0 = time.perf_counter()
         with torch.no_grad():
             mask_logits, class_logits = model(tensor, phase=2)
-            prob_tensor = torch.sigmoid(mask_logits)
+            if num_seg_classes == 2:
+                prob_tensor = torch.softmax(mask_logits, dim=1)[:, 1, :, :]
+            else:
+                prob_tensor = torch.sigmoid(mask_logits)
             cls_probs = torch.softmax(class_logits, dim=1).squeeze().cpu().numpy()
         latency_ms = (time.perf_counter() - t0) * 1000
         latencies.append(latency_ms)
@@ -138,7 +163,6 @@ def evaluate_model(
         area_ratio = mask_pixels / total_pixels
         area_ratios.append(area_ratio)
 
-        # Containment inside GT bounding boxes
         if mask_pixels > 0 and len(gt_boxes) > 0:
             inside_pixels = int(np.sum(mask_bin * gt_bbox_mask))
             containment = inside_pixels / mask_pixels
@@ -146,7 +170,6 @@ def evaluate_model(
             containment = 1.0 if mask_pixels == 0 and len(gt_boxes) == 0 else 0.0
         containments.append(containment)
 
-        # BBox IoU
         pred_box = mask_to_bbox(mask_bin)
         if pred_box is not None and len(gt_boxes) > 0:
             best_iou = max(compute_bbox_iou(pred_box, gb) for gb in gt_boxes)
@@ -171,13 +194,12 @@ def evaluate_model(
     y_true = np.array(y_true_all)
     y_pred = np.array(y_pred_all)
 
-    # Classification metrics
     accuracy = float(np.mean(y_true == y_pred))
 
-    tp = int(np.sum((y_true == 1) & (y_pred == 1)))  # Grasserie predicted as Grasserie
-    fp = int(np.sum((y_true == 0) & (y_pred == 1)))  # Healthy predicted as Grasserie
-    fn = int(np.sum((y_true == 1) & (y_pred == 0)))  # Grasserie predicted as Healthy
-    tn = int(np.sum((y_true == 0) & (y_pred == 0)))  # Healthy predicted as Healthy
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
 
     prec_g = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
     rec_g = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
@@ -206,11 +228,10 @@ def evaluate_model(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate VM-UNet model on YOLO single silkworms")
+    parser = argparse.ArgumentParser(description="Evaluate Swin-Unet models on YOLO single silkworms")
     parser.add_argument("--yolo-dir", default="data/Silkworm Diseases.v1i.yolo26", help="Path to YOLO dataset")
-    parser.add_argument("--ckpt", default="runs/segfirst_vmunet/2026-09-17_run4/checkpoints/phase2_best.pth")
-    parser.add_argument("--out-json", default="runs/segfirst_vmunet/yolo_eval_vmunet.json")
-    parser.add_argument("--img-size", type=int, default=128)
+    parser.add_argument("--checkpoint", default="runs/segfirst_swinunet/2026-09-17_run1/checkpoints/phase2_best.pth")
+    parser.add_argument("--out-json", default="runs/segfirst_swinunet/yolo_eval_swin.json")
     parser.add_argument("--gpu", default="0")
     args = parser.parse_args()
 
@@ -227,7 +248,7 @@ def main():
 
     image_files = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
     print(f"\n==================================================================")
-    print(f" YOLO Single Silkworms Benchmark (SegFirst Multi-Task VM-UNet)")
+    print(f" YOLO Single Silkworms Benchmark (Swin-Unet Models)")
     print(f" Test images: {len(image_files)} in {img_dir}")
     print(f" Device: {device}")
     print(f"==================================================================\n")
@@ -240,29 +261,29 @@ def main():
         test_items.append((img_p, txt_p, fallback_cls))
 
     results = {}
-    if os.path.exists(args.ckpt):
-        print(f"Evaluating SegFirst Multi-Task VM-UNet from {args.ckpt}...")
-        model = load_model(args.ckpt, device, img_size=args.img_size)
-        summary, recs = evaluate_model(model, test_items, device, img_size=args.img_size)
-        results["segfirst_vmunet"] = {
-            "checkpoint": args.ckpt,
-            "summary": summary,
-            "records": recs,
+    if os.path.exists(args.checkpoint):
+        print(f"\nEvaluating SegFirst Multi-Task Swin-Unet from {args.checkpoint}...")
+        model_sf, num_seg = load_model(args.checkpoint, device, img_size=224)
+        summary_sf, recs_sf = evaluate_model(model_sf, num_seg, test_items, device, img_size=224)
+        results["segfirst_swinunet"] = {
+            "checkpoint": args.checkpoint,
+            "summary": summary_sf,
+            "records": recs_sf,
         }
-        print(f"  Accuracy:         {summary['accuracy']*100:.2f}%")
-        print(f"  Macro F1:         {summary['macro_f1']*100:.2f}%")
-        print(f"  Healthy F1:       {summary['healthy']['f1']*100:.2f}% (P={summary['healthy']['precision']*100:.1f}%, R={summary['healthy']['recall']*100:.1f}%)")
-        print(f"  Grasserie F1:     {summary['grasserie']['f1']*100:.2f}% (P={summary['grasserie']['precision']*100:.1f}%, R={summary['grasserie']['recall']*100:.1f}%)")
-        print(f"  Confusion Matrix: TP={summary['confusion_matrix']['tp']}, FP={summary['confusion_matrix']['fp']}, FN={summary['confusion_matrix']['fn']}, TN={summary['confusion_matrix']['tn']}")
-        print(f"  BBox Containment: {summary['mean_containment']*100:.2f}%")
-        print(f"  BBox IoU:         {summary['mean_bbox_iou']*100:.2f}%")
-        print(f"  Latency:          {summary['mean_latency_ms']:.2f} ms/img")
+        print(f"  Accuracy:         {summary_sf['accuracy']*100:.2f}%")
+        print(f"  Macro F1:         {summary_sf['macro_f1']*100:.2f}%")
+        print(f"  Healthy F1:       {summary_sf['healthy']['f1']*100:.2f}% (P={summary_sf['healthy']['precision']*100:.1f}%, R={summary_sf['healthy']['recall']*100:.1f}%)")
+        print(f"  Grasserie F1:     {summary_sf['grasserie']['f1']*100:.2f}% (P={summary_sf['grasserie']['precision']*100:.1f}%, R={summary_sf['grasserie']['recall']*100:.1f}%)")
+        print(f"  Confusion Matrix: TP={summary_sf['confusion_matrix']['tp']}, FP={summary_sf['confusion_matrix']['fp']}, FN={summary_sf['confusion_matrix']['fn']}, TN={summary_sf['confusion_matrix']['tn']}")
+        print(f"  BBox Containment: {summary_sf['mean_containment']*100:.2f}%")
+        print(f"  BBox IoU:         {summary_sf['mean_bbox_iou']*100:.2f}%")
+        print(f"  Latency:          {summary_sf['mean_latency_ms']:.2f} ms/img")
 
     out_p = Path(args.out_json)
     out_p.parent.mkdir(parents=True, exist_ok=True)
     with open(out_p, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nSaved VM-UNet evaluation results to {out_p}")
+    print(f"\nSaved Swin-Unet evaluation results to {out_p}")
 
 
 if __name__ == "__main__":

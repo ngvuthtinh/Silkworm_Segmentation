@@ -1,5 +1,5 @@
 """
-config.py — Configuration dataclass for Segmentation-First Multi-Task VM-UNet training.
+config.py — Configuration dataclass for Segmentation-First Multi-Task Swin-Unet training.
 """
 
 from __future__ import annotations
@@ -11,36 +11,39 @@ from pathlib import Path
 
 
 @dataclass
-class SegFirstConfig:
+class SegFirstSwinConfig:
     """
-    Hyperparameters and paths for Segmentation-First Multi-Task VM-UNet training.
-
+    Hyperparameters and paths for Segmentation-First Multi-Task Swin-Unet training.
     Paths are relative to the project root (Silkworm_Segmentation/).
     """
 
     # ------------------------------------------------------------------
     # Data paths
     # ------------------------------------------------------------------
-    # Dataset A — Silkynet segmentation data (image, mask)
+    # Dataset A — Silkynet / Mixed segmentation data (image, mask)
     silkynet_data_dir: str = "data/silkworm_mixed_dataset"
 
-    # Dataset B — YOLO classification data (image, class_label, bbox)
+    # Dataset B — YOLO classification data (image, class_label)
     yolo_data_dir: str = "data/Silkworm Diseases.v1i.yolo26"
 
     # ------------------------------------------------------------------
     # Model Hyperparameters
     # ------------------------------------------------------------------
-    input_size: int = 128                  # Image resolution H=W
+    input_size: int = 224                  # Image resolution H=W (Swin Transformer native 224)
     num_seg_classes: int = 1               # Binary foreground / background
     num_cls_classes: int = 2               # Healthy (0) / Diseased (1)
+    embed_dim: int = 96
     depths: list = field(default_factory=lambda: [2, 2, 2, 2])
-    depths_decoder: list = field(default_factory=lambda: [2, 2, 2, 1])
+    decoder_depths: list = field(default_factory=lambda: [2, 2, 2, 1])
+    num_heads: list = field(default_factory=lambda: [3, 6, 12, 24])
+    window_size: int = 7
     drop_path_rate: float = 0.2
     cls_hidden: int = 128                  # Hidden dimension of classification FC layers
     cls_dropout: float = 0.3
 
-    # Pretrained VMamba checkpoint (relative to project root)
-    pretrained_path: str = "models/vmunet/pre_trained_weights/vmamba_small_e238_ema.pth"
+    # Pretrained Swin-T checkpoint
+    pretrained_path: str = "models/swin_unet/pretrained_ckpt/swin_tiny_patch4_window7_224.pth"
+    swin_cfg_path: str = "models/swin_unet/configs/swin_tiny_patch4_window7_224_lite.yaml"
 
     # ------------------------------------------------------------------
     # Two-Phase Training Strategy
@@ -53,7 +56,7 @@ class SegFirstConfig:
     phase2_epochs: int = 25
     freeze_backbone_phase2: bool = False   # If True, freeze backbone parameters in Phase 2
     lr_backbone: float = 1e-5             # Small LR for backbone to preserve seg features
-    lr_seg_head: float = 1e-4             # Standard LR for segmentation head
+    lr_seg_head: float = 1e-4             # Standard LR for segmentation decoder
     lr_cls_head: float = 1e-3             # Larger LR for classification head
 
     # Loss weights (Segmentation-first priority)
@@ -65,8 +68,8 @@ class SegFirstConfig:
     # ------------------------------------------------------------------
     # General Training Params
     # ------------------------------------------------------------------
-    batch_size_seg: int = 2                # Batch size for Dataset A
-    batch_size_cls: int = 2                # Batch size for Dataset B
+    batch_size_seg: int = 6                # Batch size for Dataset A
+    batch_size_cls: int = 6                # Batch size for Dataset B
     max_cls_samples: int | None = 500      # Subsample Dataset B to N images (None for all)
     num_workers: int = 4
     seed: int = 42
@@ -87,9 +90,9 @@ class SegFirstConfig:
 
     def __post_init__(self):
         if not self.work_dir:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             self.work_dir = os.path.join(
-                "runs", "segfirst_vmunet", f"run_{timestamp}"
+                "runs", "segfirst_swinunet", timestamp
             )
 
     @property
@@ -100,14 +103,6 @@ class SegFirstConfig:
     def log_dir(self) -> str:
         return os.path.join(self.work_dir, "logs")
 
-    @property
-    def vis_dir(self) -> str:
-        return os.path.join(self.work_dir, "visualizations")
-
     def create_dirs(self) -> None:
-        for d in [self.checkpoint_dir, self.log_dir, self.vis_dir]:
-            os.makedirs(d, exist_ok=True)
-
-    def to_dict(self) -> dict:
-        import dataclasses
-        return dataclasses.asdict(self)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)

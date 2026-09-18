@@ -17,15 +17,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Resolve Swin-Unet import path
+# Resolve paths
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-_SWIN_DIR = _PROJECT_ROOT / "Swin-Unet"
-sys.path.insert(0, str(_SWIN_DIR))
-sys.path.insert(0, str(_HERE))
+_SWIN_DIR = _PROJECT_ROOT / "models" / "swin_unet"
+if str(_SWIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_SWIN_DIR))
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from networks.swin_transformer_unet_skip_expand_decoder_sys import SwinTransformerSys
-from config import SegFirstSwinConfig
+from experiments.segfirst_swinunet.config import SegFirstSwinConfig
 
 
 class ClassificationHead(nn.Module):
@@ -50,7 +52,6 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x is [B, L, C] -> mean over tokens -> [B, C]
         if x.dim() == 3:
             x = x.mean(dim=1)
         elif x.dim() == 4:
@@ -103,7 +104,6 @@ class SegFirstSwinUnet(nn.Module):
             use_checkpoint=False,
         )
 
-        # Bottleneck dimension: 96 * 2^(4-1) = 768 for Swin-T
         bottleneck_dim = int(config.embed_dim * 2 ** (len(config.depths) - 1))
         self.cls_head = ClassificationHead(
             in_channels=bottleneck_dim,
@@ -115,19 +115,12 @@ class SegFirstSwinUnet(nn.Module):
     def forward(
         self, x: torch.Tensor, phase: int = 2
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """
-        phase == 1: returns (mask_logits, None)
-        phase == 2: returns (mask_logits, class_logits)
-        """
         if x.size()[1] == 1:
             x = x.repeat(1, 3, 1, 1)
 
-        # 1. Forward encoder to bottleneck
-        bottleneck, x_downsample = self.swin_unet.forward_features(x)  # [B, L, C]
-
-        # 2. Forward decoder to segmentation mask
+        bottleneck, x_downsample = self.swin_unet.forward_features(x)
         x_up = self.swin_unet.forward_up_features(bottleneck, x_downsample)
-        mask_logits = self.swin_unet.up_x4(x_up)  # [B, num_seg_classes, H, W]
+        mask_logits = self.swin_unet.up_x4(x_up)
 
         if mask_logits.shape[-2:] != x.shape[-2:]:
             mask_logits = F.interpolate(
@@ -137,18 +130,12 @@ class SegFirstSwinUnet(nn.Module):
         if phase == 1:
             return mask_logits, None
 
-        # 3. Forward classification head from bottleneck
         class_logits = self.cls_head(bottleneck)
-
         return mask_logits, class_logits
 
     def get_parameter_groups(
         self, lr_backbone: float, lr_seg: float, lr_cls: float
     ) -> list[dict]:
-        """
-        Return parameter groups with differential learning rates to protect
-        the backbone during Phase 2 multi-task fine-tuning.
-        """
         backbone_params = []
         seg_head_params = []
         cls_head_params = list(self.cls_head.parameters())
@@ -166,7 +153,6 @@ class SegFirstSwinUnet(nn.Module):
         ]
 
     def load_from(self, pretrained_path: str) -> None:
-        """Load pretrained Swin-T ImageNet weights."""
         if pretrained_path and os.path.exists(pretrained_path):
             print(f"Loading pretrained Swin-T backbone weights from: {pretrained_path}")
             device = next(self.parameters()).device
