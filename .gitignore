@@ -19,12 +19,12 @@ dist/
 build/
 
 # ==========================================
-# Datasets & Data Folders (Un-comment if ignoring)
+# Datasets & Data Folders
 # ==========================================
-# data/
-# **/data/
-# datasets/
-# **/datasets/
+data/
+**/data/
+datasets/
+**/datasets/
 *.zip
 *.tar
 *.tar.gz
