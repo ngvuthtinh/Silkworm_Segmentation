@@ -1,252 +1,259 @@
+#!/usr/bin/env python3
 """
-train.py — Joint Multi-Task Training for VM-UNet (Segmentation + Classification).
+experiments/multitask_vmunet/train.py
+End-to-End Multi-Task VM-UNet Training (Segmentation + Classification).
 
-Trains VM-UNet on both segmentation and classification simultaneously.
-Results are saved to: runs/multitask_vmunet/<timestamp>/
-    ├── checkpoints/    ← best.pth, latest.pth
-    ├── logs/           ← TensorBoard events & training log
-    └── visualizations/ ← Prediction sample plots
+Goal: Trên 1 tấm ảnh, phân đoạn con tằm VÀ chẩn đoán bệnh cùng lúc.
+  - Nhánh Seg:  Dự đoán Mask thân tằm (nhị phân 0/1)
+  - Nhánh Cls:  Dự đoán nhãn bệnh (0=Grasserie, 1=Healthy)
+  - Loss:       Dice + BCE (seg) + CrossEntropy (cls) tối ưu đồng thời trong 1 lần backward
+
+Chạy thử (smoke-test 5 batch):
+  ./.venv/bin/python experiments/multitask_vmunet/train.py --smoke-test
+
+Chạy thật:
+  CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python experiments/multitask_vmunet/train.py
 """
 
 from __future__ import annotations
 
 import argparse
-import os
-import random
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-# ── Resolve project root ──────────────────────────────────────────────────────
+# ─── Paths ────────────────────────────────────────────────────────────────────
 _HERE = Path(__file__).resolve().parent
-_PROJECT_ROOT = _HERE.parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+ROOT  = _HERE.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "models" / "vmunet") not in sys.path:
+    sys.path.insert(0, str(ROOT / "models" / "vmunet"))
 
-# ── Experiment-local imports ──────────────────────────────────────────────────
-from experiments.multitask_vmunet.config import MultiTaskConfig
+from src.dataset_multitask import MultitaskSilkwormDataset
 from experiments.multitask_vmunet.model import MultiTaskVMUNet
 
-# ── Shared src imports ────────────────────────────────────────────────────────
-from src.dataset import SilkynetSegDataset, YOLOClsDataset
-from src.losses import SegLoss, ClsLoss
-from src.metrics import evaluate_seg, evaluate_cls
+# ─── Hàm mất mát ──────────────────────────────────────────────────────────────
+
+class DiceLoss(nn.Module):
+    def __init__(self, smooth: float = 1e-6):
+        super().__init__()
+        self.smooth = smooth
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        p = pred.contiguous().view(-1)
+        t = target.contiguous().view(-1)
+        inter = (p * t).sum()
+        return 1.0 - (2.0 * inter + self.smooth) / (p.sum() + t.sum() + self.smooth)
 
 
-def set_seed(seed: int = 42) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+class MultitaskLoss(nn.Module):
+    """Loss = lambda_seg*(BCE+Dice) + lambda_cls*CrossEntropy."""
+    def __init__(self, lambda_seg: float = 1.0, lambda_cls: float = 1.0):
+        super().__init__()
+        self.lambda_seg = lambda_seg
+        self.lambda_cls = lambda_cls
+        self.bce  = nn.BCEWithLogitsLoss()
+        self.dice = DiceLoss()
+        self.ce   = nn.CrossEntropyLoss(label_smoothing=0.05)
+
+    def forward(
+        self,
+        mask_logits:   torch.Tensor,
+        mask_gt:       torch.Tensor,
+        cls_logits:    torch.Tensor,
+        cls_gt:        torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        l_bce  = self.bce(mask_logits, mask_gt)
+        l_dice = self.dice(torch.sigmoid(mask_logits), mask_gt)
+        l_seg  = l_bce + l_dice
+        l_cls  = self.ce(cls_logits, cls_gt)
+        total  = self.lambda_seg * l_seg + self.lambda_cls * l_cls
+        return total, l_seg, l_cls
 
 
-def train(cfg: MultiTaskConfig) -> None:
-    if torch.cuda.is_available():
-        if cfg.gpu_id.lower() == "auto":
-            best_gpu = 0
-            max_free_mem = -1
-            for i in range(torch.cuda.device_count()):
-                free_mem, _ = torch.cuda.mem_get_info(i)
-                if free_mem > max_free_mem:
-                    max_free_mem = free_mem
-                    best_gpu = i
-            gpu_idx = best_gpu
-        else:
-            gpu_idx = int(cfg.gpu_id) if cfg.gpu_id.isdigit() else 0
-            if gpu_idx >= torch.cuda.device_count():
-                gpu_idx = 0
-        device = torch.device(f"cuda:{gpu_idx}")
-        torch.cuda.set_device(device)
-    else:
-        device = torch.device("cpu")
+# ─── Metrics ──────────────────────────────────────────────────────────────────
 
-    set_seed(cfg.seed)
-    cfg.create_dirs()
+def dice_score(pred_logits: torch.Tensor, target: torch.Tensor, thresh: float = 0.5) -> float:
+    pred = (torch.sigmoid(pred_logits) > thresh).float()
+    inter = (pred * target).sum()
+    denom = pred.sum() + target.sum()
+    return (2.0 * inter / (denom + 1e-6)).item()
 
-    print("=" * 80)
-    print(" 🚀 Joint Multi-Task VM-UNet Training Pipeline")
-    print(f" Output Directory: {cfg.work_dir}")
-    print(f" Device: {device} ({torch.cuda.get_device_name(device) if device.type == 'cuda' else 'CPU'})")
-    print(f" Epochs: {cfg.epochs} | LR: {cfg.lr}")
-    print(f" Lambda Seg: {cfg.lambda_seg} | Lambda Cls: {cfg.lambda_cls}")
-    print("=" * 80)
 
-    # 1. Datasets
-    ds_seg_train = SilkynetSegDataset(
-        data_root=os.path.join(_PROJECT_ROOT, cfg.silkynet_data_dir),
-        img_size=cfg.input_size,
-        is_train=True,
-    )
-    ds_seg_val = SilkynetSegDataset(
-        data_root=os.path.join(_PROJECT_ROOT, cfg.silkynet_data_dir),
-        img_size=cfg.input_size,
-        is_train=False,
-    )
-    ds_cls_train = YOLOClsDataset(
-        data_root=os.path.join(_PROJECT_ROOT, cfg.yolo_data_dir),
-        split="train",
-        img_size=cfg.input_size,
-        max_samples=cfg.max_cls_samples,
-        seed=cfg.seed,
-    )
-    ds_cls_val = YOLOClsDataset(
-        data_root=os.path.join(_PROJECT_ROOT, cfg.yolo_data_dir),
-        split="valid",
-        img_size=cfg.input_size,
-        max_samples=cfg.max_cls_samples,
-        seed=cfg.seed,
-    )
+def cls_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> float:
+    return (logits.argmax(1) == labels).float().mean().item()
 
-    loader_seg_train = DataLoader(
-        ds_seg_train, batch_size=cfg.batch_size_seg, shuffle=True, num_workers=cfg.num_workers, pin_memory=True
-    )
-    loader_seg_val = DataLoader(
-        ds_seg_val, batch_size=cfg.batch_size_seg, shuffle=False, num_workers=cfg.num_workers, pin_memory=True
-    )
-    loader_cls_train = DataLoader(
-        ds_cls_train, batch_size=cfg.batch_size_cls, shuffle=True, num_workers=cfg.num_workers, pin_memory=True
-    )
-    loader_cls_val = DataLoader(
-        ds_cls_val, batch_size=cfg.batch_size_cls, shuffle=False, num_workers=cfg.num_workers, pin_memory=True
-    )
 
-    print(f"  Dataset A (Seg): {len(ds_seg_train)} train | {len(ds_seg_val)} val")
-    print(f"  Dataset B (Cls): {len(ds_cls_train)} train | {len(ds_cls_val)} val\n")
+# ─── Training ─────────────────────────────────────────────────────────────────
 
-    # 2. Model
+def train(args: argparse.Namespace) -> None:
+    DATA_DIR  = ROOT / "data" / "Silkworm_mixed_dataset_10k"
+    IMG_SIZE  = 256
+    BATCH     = 8 if not args.smoke_test else 2
+    EPOCHS    = 40 if not args.smoke_test else 1
+    LR        = 1e-4
+    WORKERS   = 4
+    SMOKE_N   = 5
+
+    device = _pick_device(args)
+    print(f"\n{'='*70}")
+    print(f" 🐛 Multi-Task VM-UNet — End-to-End Training")
+    print(f"    Dataset : {DATA_DIR}")
+    print(f"    Img Size: {IMG_SIZE}×{IMG_SIZE}  |  Batch: {BATCH}  |  Epochs: {EPOCHS}")
+    print(f"    Device  : {device}")
+    print(f"    Mode    : {'SMOKE-TEST (5 batch)' if args.smoke_test else 'FULL TRAIN'}")
+    print(f"{'='*70}\n")
+
+    ds_train = MultitaskSilkwormDataset(DATA_DIR, "train", IMG_SIZE, augment=True)
+    ds_val   = MultitaskSilkwormDataset(DATA_DIR, "valid", IMG_SIZE, augment=False)
+    dl_train = DataLoader(ds_train, BATCH, shuffle=True,  num_workers=WORKERS, pin_memory=True)
+    dl_val   = DataLoader(ds_val,   BATCH, shuffle=False, num_workers=WORKERS, pin_memory=True)
+    print(f"  Train: {len(ds_train)} mẫu ({len(dl_train)} batches)  |  Val: {len(ds_val)} mẫu")
+
     model = MultiTaskVMUNet(
         input_channels=3,
-        num_seg_classes=cfg.num_seg_classes,
-        num_cls_classes=cfg.num_cls_classes,
-        depths=cfg.depths,
-        depths_decoder=cfg.depths_decoder,
-        drop_path_rate=cfg.drop_path_rate,
-        load_ckpt_path=os.path.join(_PROJECT_ROOT, cfg.pretrained_path),
-        cls_hidden=cfg.cls_hidden,
-        cls_dropout=cfg.cls_dropout,
+        num_seg_classes=1,
+        num_cls_classes=2,
+        load_ckpt_path=None,
     ).to(device)
+    total_params = sum(p.numel() for p in model.parameters()) / 1e6
+    print(f"  Params : {total_params:.1f}M\n")
 
-    model.load_pretrained()
+    loss_fn   = MultitaskLoss(lambda_seg=1.0, lambda_cls=1.0)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
+    scaler    = GradScaler()
 
-    seg_loss_fn = SegLoss(w_bce=cfg.w_bce, w_dice=cfg.w_dice)
-    cls_loss_fn = ClsLoss(label_smoothing=cfg.label_smoothing)
+    run_tag  = "smoke_test" if args.smoke_test else datetime.now().strftime("%Y-%m-%d_%H%M")
+    out_dir  = ROOT / "runs" / "multitask_vmunet" / run_tag
+    ckpt_dir = out_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, betas=cfg.betas)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.T_max, eta_min=cfg.eta_min)
-    scaler = GradScaler(enabled=cfg.amp and device.type == "cuda")
-    writer = SummaryWriter(cfg.log_dir)
+    best_score = 0.0
 
-    best_combined_score = 0.0
-
-    for ep in range(1, cfg.epochs + 1):
+    for epoch in range(1, EPOCHS + 1):
         model.train()
-        total_loss = 0.0
+        t_loss = t_seg = t_cls = 0.0
+        n_batches = min(SMOKE_N, len(dl_train)) if args.smoke_test else len(dl_train)
+        pct_epoch = epoch / EPOCHS * 100
 
-        iter_seg = iter(loader_seg_train)
-        iter_cls = iter(loader_cls_train)
-        max_steps = max(len(loader_seg_train), len(loader_cls_train))
+        pbar = tqdm(
+            enumerate(dl_train),
+            total=n_batches,
+            desc=f"[VM-UNet] Epoch {epoch:02d}/{EPOCHS} ({pct_epoch:5.1f}%) [TRAIN]",
+            ncols=110,
+            leave=True,
+        )
+        for i, (imgs, masks, labels) in pbar:
+            if i >= n_batches:
+                break
+            imgs   = imgs.to(device)
+            masks  = masks.to(device)
+            labels = labels.to(device)
 
-        pbar = tqdm(range(max_steps), desc=f"Epoch [{ep:02d}/{cfg.epochs:02d}]", ncols=90)
-        for _ in pbar:
             optimizer.zero_grad(set_to_none=True)
+            with autocast(device_type="cuda" if device.type == "cuda" else "cpu"):
+                mask_logits, cls_logits = model(imgs)
+                loss, l_seg, l_cls = loss_fn(mask_logits, masks, cls_logits, labels)
 
-            try:
-                imgs_A, masks_A = next(iter_seg)
-            except StopIteration:
-                iter_seg = iter(loader_seg_train)
-                imgs_A, masks_A = next(iter_seg)
-
-            try:
-                imgs_B, labels_B = next(iter_cls)
-            except StopIteration:
-                iter_cls = iter(loader_cls_train)
-                imgs_B, labels_B = next(iter_cls)
-
-            imgs_A, masks_A = imgs_A.to(device), masks_A.to(device)
-            imgs_B, labels_B = imgs_B.to(device), labels_B.to(device)
-
-            with autocast("cuda", enabled=cfg.amp and device.type == "cuda"):
-                mask_pred_A, _ = model(imgs_A)
-                loss_seg = seg_loss_fn(mask_pred_A, masks_A)
-
-                _, class_logits_B = model(imgs_B)
-                loss_cls = cls_loss_fn(class_logits_B, labels_B)
-
-                loss_step = cfg.lambda_seg * loss_seg + cfg.lambda_cls * loss_cls
-
-            scaler.scale(loss_step).backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
 
-            total_loss += loss_step.item()
-            pbar.set_postfix({"seg": f"{loss_seg.item():.4f}", "cls": f"{loss_cls.item():.4f}"})
+            t_loss += loss.item(); t_seg += l_seg.item(); t_cls += l_cls.item()
+            pbar.set_postfix({
+                "loss": f"{loss.item():.3f}",
+                "seg":  f"{l_seg.item():.3f}",
+                "cls":  f"{l_cls.item():.3f}",
+                "lr":   f"{scheduler.get_last_lr()[0]:.1e}",
+            })
 
         scheduler.step()
-        mean_loss = total_loss / max_steps
+        mean_loss = t_loss / n_batches
 
-        # Validation
-        val_iou, val_dice = evaluate_seg(model, loader_seg_val, device, cfg.seg_threshold)
-        val_acc, val_f1 = evaluate_cls(model, loader_cls_val, device)
-        combined_score = val_dice + 0.5 * val_acc
+        if args.smoke_test:
+            print(f"  [SMOKE] Epoch {epoch} OK — loss={mean_loss:.4f}")
+            break
 
-        writer.add_scalar("Train/Loss", mean_loss, ep)
-        writer.add_scalar("Val/Dice", val_dice, ep)
-        writer.add_scalar("Val/IoU", val_iou, ep)
-        writer.add_scalar("Val/Accuracy", val_acc, ep)
-        writer.add_scalar("Val/F1", val_f1, ep)
+        model.eval()
+        val_dice = val_acc = 0.0
+        v_steps  = 0
+        with torch.no_grad():
+            for imgs, masks, labels in tqdm(dl_val, desc=f"  → [VM-UNet] Val ", ncols=110, leave=False):
+                imgs   = imgs.to(device)
+                masks  = masks.to(device)
+                labels = labels.to(device)
+                with autocast(device_type="cuda"):
+                    mask_logits, cls_logits = model(imgs)
+                val_dice += dice_score(mask_logits, masks)
+                val_acc  += cls_accuracy(cls_logits, labels)
+                v_steps  += 1
 
-        is_best = combined_score > best_combined_score
-        if is_best:
-            best_combined_score = combined_score
-            torch.save(model.state_dict(), os.path.join(cfg.checkpoint_dir, "best.pth"))
+        val_dice /= v_steps
+        val_acc  /= v_steps
+        combined  = 0.7 * val_dice + 0.3 * val_acc
 
-        if ep % cfg.save_interval == 0 or ep == cfg.epochs:
-            torch.save(model.state_dict(), os.path.join(cfg.checkpoint_dir, f"epoch_{ep:03d}.pth"))
+        best_tag = ""
+        if combined > best_score:
+            best_score = combined
+            torch.save({"epoch": epoch, "model": model.state_dict(), "score": best_score},
+                       ckpt_dir / "best.pth")
+            best_tag = " ★ BEST"
 
-        best_tag = " (NEW BEST!)" if is_best else ""
-        print(f"  [Ep {ep:02d}/{cfg.epochs:02d}] Loss={mean_loss:.4f} | Seg Dice={val_dice:.4f} | IoU={val_iou:.4f} | Cls Acc={val_acc:.4f} (Score={combined_score:.4f}){best_tag}")
+        print(
+            f"  [VM-UNet] Ep {epoch:02d}/{EPOCHS} "
+            f"({pct_epoch:5.1f}%) | "
+            f"Loss={mean_loss:.4f} | Dice={val_dice:.4f} | Acc={val_acc:.4f} | "
+            f"Score={combined:.4f}{best_tag}"
+        )
 
-    print("\n" + "=" * 80)
-    print("🎉 Huấn luyện Joint Multi-Task VM-UNet hoàn tất!")
-    print(f"  Best Checkpoint: {os.path.join(cfg.checkpoint_dir, 'best.pth')} (Score: {best_combined_score:.4f})")
-    print("=" * 80)
-    writer.close()
+        if epoch % 5 == 0:
+            torch.save({"epoch": epoch, "model": model.state_dict()},
+                       ckpt_dir / f"ep{epoch:03d}.pth")
+
+    torch.save({"epoch": EPOCHS, "model": model.state_dict()}, ckpt_dir / "last.pth")
+    if not args.smoke_test:
+        print(f"\n✅ [VM-UNet] Hoàn thành! Best score={best_score:.4f} | Saved: {out_dir}")
+    else:
+        print(f"\n✅ [VM-UNet] Smoke-test PASSED!")
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Multi-Task VM-UNet Training")
-    p.add_argument("--epochs", type=int, default=50)
-    p.add_argument("--batch-size-seg", type=int, default=2)
-    p.add_argument("--batch-size-cls", type=int, default=2)
-    p.add_argument("--lr", type=float, default=1e-4)
-    p.add_argument("--lambda-seg", type=float, default=1.0)
-    p.add_argument("--lambda-cls", type=float, default=1.0)
-    p.add_argument("--gpu", type=str, default="0")
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--no-amp", action="store_true")
-    return p.parse_args()
+def _pick_device(args: argparse.Namespace) -> torch.device:
+    if not torch.cuda.is_available():
+        return torch.device("cpu")
+    if hasattr(args, "gpu") and str(args.gpu).isdigit():
+        idx = int(args.gpu)
+        if idx < torch.cuda.device_count():
+            torch.cuda.set_device(idx)
+            return torch.device(f"cuda:{idx}")
+    best, best_free = 0, 0
+    for i in range(torch.cuda.device_count()):
+        free, _ = torch.cuda.mem_get_info(i)
+        if free > best_free:
+            best_free = free
+            best = i
+    torch.cuda.set_device(best)
+    return torch.device(f"cuda:{best}")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Multi-Task VM-UNet Trainer")
+    p.add_argument("--smoke-test", action="store_true", help="Chạy thử 5 batch")
+    p.add_argument("--gpu", type=str, default="auto", help="GPU index hoặc 'auto'")
+    args = p.parse_args()
+    train(args)
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    cfg = MultiTaskConfig(
-        epochs=args.epochs,
-        batch_size_seg=args.batch_size_seg,
-        batch_size_cls=args.batch_size_cls,
-        lr=args.lr,
-        lambda_seg=args.lambda_seg,
-        lambda_cls=args.lambda_cls,
-        gpu_id=args.gpu,
-        seed=args.seed,
-        amp=not args.no_amp,
-    )
-    train(cfg)
+    main()
