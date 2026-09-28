@@ -1,233 +1,159 @@
-# 📁 Cấu trúc Dự án Silkworm Segmentation
+# 📁 Project Structure & Architecture Guidelines — Silkworm Segmentation
 
-> **Tư tưởng thiết kế**: Tách biệt hoàn toàn 4 thứ — **Code Model** / **Code Chung** / **Code Thử Nghiệm** / **Kết Quả**.  
-> Mỗi thứ nằm đúng chỗ của nó, không lẫn lộn.
+> **Design Philosophy**: Complete separation of **Upstream Models** / **Shared Core Code** / **Experiment Wrappers** / **Generated Artifacts**.  
+> Every component resides strictly in its designated tier without overlap or circular dependencies.
 
 ---
 
-## 🗺️ Sơ đồ tổng quan
+## 🗺️ High-Level Overview
 
-```
+```text
 Silkworm_Segmentation/
 │
-├── models/          ← [TẦNG 1] Kiến trúc model gốc (không sửa)
-├── src/             ← [TẦNG 2] Code dùng chung (bạn viết & duy trì)
-├── experiments/     ← [TẦNG 3] Code thử nghiệm (wrapper + config)
-└── runs/            ← [TẦNG 4] Kết quả tự sinh ra khi train
+├── models/          ← [TIER 1] Original Upstream Model Code (Submodules, READ-ONLY)
+├── src/             ← [TIER 2] Shared Core Framework Modules (Maintained by you)
+├── experiments/     ← [TIER 3] Experiment Wrappers & Pipelines (Configs & Dual Task Heads)
+└── runs/            ← [TIER 4] Automatically Generated Artifacts (Checkpoints & Logs)
 ```
 
 ---
 
-## TẦNG 1 — `models/` : Kiến trúc Model Gốc
+## TIER 1 — `models/` : Original Upstream Backbones
 
-> 🔒 **Quy tắc: KHÔNG BAO GIỜ SỬA CODE Ở ĐÂY.**  
-> Đây là các repo gốc của tác giả, được kéo về bằng `git submodule`.  
-> Khi tác giả ra bản vá/cập nhật, chỉ cần chạy `git submodule update` là xong.
+> 🔒 **Rule: STRICTLY READ-ONLY — DO NOT MODIFY DIRECTLY.**  
+> These are official upstream repositories imported via `git submodule`.  
+> Updating backbones is done cleanly via `git submodule update`.
 
-```
+```text
 models/
-├── vmunet/          # git submodule → repo gốc VM-UNet/Mamba
-├── swin_unet/       # git submodule → repo gốc Swin-Unet
-└── sam3/            # git submodule → repo gốc SAM
+├── vmunet/          # git submodule → Original VM-UNet / Visual Mamba repo
+├── swin_unet/       # git submodule → Original Swin-UNet repo
+├── sam3/            # git submodule → Original SAM 3 repo
+└── silkynet/        # Submodule / repository → Silkynet model & counting data
 ```
 
-**Cách thêm model mới:**
+**Adding a new model backbone:**
 ```bash
 git submodule add https://github.com/author/NewModel.git models/new_model
 ```
 
 ---
 
-## TẦNG 2 — `src/` : Code Dùng Chung
+## TIER 2 — `src/` : Shared Core Modules
 
-> ✅ **Đây là code BẠN viết, dùng chung cho mọi experiment.**  
-> Sửa 1 chỗ → toàn bộ experiment đều được hưởng, không cần copy-paste.
+> ✅ **Code maintained by you and shared across all experiments.**  
+> Fixing a bug or adding a feature in `src/` instantly improves all experiments.
 
-```
+```text
 src/
-├── dataset.py       # DataLoader dùng chung (SilkynetSegDataset, YOLOClsDataset)
-├── losses.py        # Loss functions mặc định (Dice + BCE + CrossEntropy)
-├── metrics.py       # Dice, IoU, F1, Accuracy
-└── visualizer.py    # Vẽ ảnh kết quả (input / mask / overlay / badge)
+├── dataset.py            # Single-task DataLoaders (SilkynetSegDataset, YOLOClsDataset)
+├── dataset_multitask.py  # Joint Multi-Task DataLoaders (SilkwormMultiTaskDataset)
+├── losses.py             # Shared loss functions (DiceLoss, SegLoss, ClsLoss, JointMultiTaskLoss)
+├── metrics.py            # Evaluation metrics (Dice, IoU, Accuracy, F1, Precision, Recall)
+└── visualizer.py         # Prediction visualization tools (Overlay, RGB, Masks)
 ```
 
-### ❓ Khi nào dùng `src/` vs. viết riêng trong `experiments/`?
+### ❓ When to put code in `src/` vs. inside `experiments/`?
 
-| Tình huống | Làm gì |
-|------------|--------|
-| Loss function giống nhau ở mọi model | Viết vào `src/losses.py` |
-| 1 model cần loss đặc biệt (VD: Focal Loss chỉ cho VM-UNet) | Tạo `experiments/segfirst_vmunet/losses.py` để **ghi đè** |
-| Dataset load ảnh theo cách chung | Viết vào `src/dataset.py` |
-| 1 experiment cần augmentation đặc biệt | Override trong `experiments/.../dataset.py` |
+| Scenario | Action |
+|---|---|
+| Loss function shared across multiple multi-task models | Put in `src/losses.py` |
+| 1 experiment needs a custom loss (e.g., Focal Loss specifically for VM-UNet) | Create `experiments/multitask_vmunet/losses.py` to **override** |
+| Standard dataset loading logic | Put in `src/dataset_multitask.py` |
+| 1 experiment requires specialized data augmentations | Override inside `experiments/<exp_name>/dataset.py` |
 
-**Cơ chế ghi đè (Override) trong code:**
+**Code Fallback / Override Mechanism:**
 ```python
-# experiments/segfirst_vmunet/train.py
+# experiments/multitask_vmunet/train.py
 
 try:
-    from .losses import MyCustomLoss      # 👈 dùng loss riêng nếu có
+    from .losses import CustomLoss       # 👈 Use custom loss if defined in experiment
 except ImportError:
-    from src.losses import MyCustomLoss   # 👈 fallback về loss chung
+    from src.losses import CustomLoss    # 👈 Fallback to shared loss in src/
 ```
 
 ---
 
-## TẦNG 3 — `experiments/` : Code Thử Nghiệm
+## TIER 3 — `experiments/` : Experiment Wrappers & Pipelines
 
-> 🧪 **Mỗi thư mục = 1 cách tiếp cận bài toán.**  
-> Code ở đây ngắn gọn, chủ yếu là **wrapper** gọi lại `models/` và `src/`.  
-> KHÔNG chứa toàn bộ logic nặng — logic đó đã ở `src/` hoặc `models/`.
+> 🧪 **Each folder represents an independent research approach.**  
+> Experiment files are concise wrappers linking `models/` backbones with dual task heads (`SegmentationHead` + `ClassificationHead`) and shared `src/` utilities.
 
-```
+```text
 experiments/
-├── segfirst_vmunet/          # Thử nghiệm: VM-UNet + 2-phase training
-│   ├── config.py             #   ← Mọi hyperparameter ở đây
-│   ├── model.py              #   ← Wrap models/vmunet vào bài toán silkworm
-│   ├── train.py              #   ← Script train (gọi src/ + model.py)
-│   ├── evaluate.py           #   ← Script đánh giá
-│   ├── inference.py          #   ← Script dự đoán & trực quan hóa
-│   └── notes.md              #   ← Ghi chú thử nghiệm, kết quả, nhận xét
+├── multitask_vmunet/         # ⭐ Primary Joint Multi-Task VM-UNet Experiment
+│   ├── config.py             #   ← Hyperparameter dataclass & output directory setup
+│   ├── model.py              #   ← MultiTaskVMUNet wrapper connecting VSSM backbone with dual heads
+│   ├── train.py              #   ← End-to-end multi-task training loop
+│   ├── evaluate.py           #   ← Test split evaluation script
+│   ├── inference.py          #   ← Inference script for unseen images
+│   └── notes.md              #   ← Experiment notes, hyperparameter logs, observations
 │
-├── segfirst_swinunet/        # Thử nghiệm: Swin-UNet + 2-phase training
+├── multitask_swinunet/       # Joint Multi-Task Swin-UNet Experiment
 │   ├── config.py
 │   ├── model.py
 │   ├── train.py
 │   ├── evaluate.py
-│   ├── inference.py
-│   └── notes.md
+│   └── inference.py
 │
-└── multitask_vmunet/         # Thử nghiệm: VM-UNet Multi-Task đồng thời (Joint)
-    ├── config.py
-    ├── model.py
-    ├── train.py
-    ├── inference.py
-    └── notes.md
+├── segfirst_vmunet/          # Segmentation-First 2-Phase Staged Baseline
+└── segfirst_swinunet/        # Segmentation-First Swin-UNet Baseline
 ```
 
-### 📄 Ví dụ `config.yaml`
+### 🧠 Dual-Task Head Model Architecture Design (`model.py`)
 
-```yaml
-experiment_name: segfirst_vmunet_phase2
-
-model:
-  name: SegFirstVMUNet
-  backbone: vmamba_tiny
-  pretrained: runs/segfirst_vmunet/2026-09-18_run1/checkpoints/best.pth
-
-data:
-  train_images: data/silkynet/train/images
-  train_masks:  data/silkynet/train/masks
-  yolo_cls_dir: data/diseases/train
-
-training:
-  phase: 2
-  epochs: 50
-  batch_size: 8
-  lr_backbone: 1.0e-5
-  lr_seg:      1.0e-4
-  lr_cls:      1.0e-3
-  lambda_cls:  0.1
-```
-
-> 💡 Nhìn vào `config.yaml` là biết ngay experiment đó thử nghiệm cái gì — không cần đọc code.
+In joint multi-task learning (`multitask_vmunet`), a single shared backbone processes the image:
+1. **Segmentation Head**: Decoder outputs dense binary mask `[B, 1, H, W]`.
+2. **Classification Head**: Registered forward hook captures deepest bottleneck features (`VSSM.layers[3]`), passes through Adaptive Average Pooling -> FC layers to output `[B, 2]` disease logits.
 
 ---
 
-## TẦNG 4 — `runs/` : Kết Quả (Tự Sinh Ra)
+## TIER 4 — `runs/` : Generated Artifacts (Auto-Created)
 
-> 🤖 **Thư mục này KHÔNG chứa code. Hoàn toàn tự sinh ra khi chạy train.**  
-> Mỗi lần train = 1 thư mục mới theo timestamp, không bao giờ ghi đè lên nhau.
+> 🤖 **Contains NO code. Auto-generated during training.**  
+> Every execution creates a unique timestamped directory, ensuring no run overwrites another.
 
-```
+```text
 runs/
-├── segfirst_vmunet/
-│   ├── 2026-09-18_14-30-00/      # Lần train 1
-│   │   ├── config.yaml           #   snapshot config lúc train (để tra cứu sau)
+├── multitask_vmunet/
+│   ├── 2026-09-28_14-30-00/      # Run timestamp directory
+│   │   ├── config.yaml           #   Snapshot copy of configuration used for this run
 │   │   ├── checkpoints/
-│   │   │   ├── best.pth          #   checkpoint tốt nhất (val_dice cao nhất)
-│   │   │   └── last.pth          #   checkpoint epoch cuối
+│   │   │   ├── best_model.pth    #   Best checkpoint based on validation score
+│   │   │   └── last_model.pth    #   Final epoch checkpoint
 │   │   ├── logs/
-│   │   │   └── train_log.csv     #   loss, dice, f1 từng epoch
+│   │   │   ├── train_log.csv     #   Per-epoch losses and metrics
+│   │   │   └── events.out.tfevents.* # Tensorboard log file
 │   │   └── test_outputs/
-│   │       ├── img_001.png       #   ảnh kết quả dự đoán
-│   │       └── img_002.png
+│   │       ├── sample_001.png    #   Visualization of prediction vs ground truth
+│   │       └── sample_002.png
 │   │
-│   └── 2026-09-20_09-15-00/      # Lần train 2 (chỉnh config, chạy lại)
-│       ├── config.yaml
-│       ├── checkpoints/
-│       └── test_outputs/
+│   └── 2026-09-28_18-00-00/      # Subsequent training run
 │
-└── segfirst_swinunet/
-    └── 2026-09-19_11-00-00/
-        ├── config.yaml
-        ├── checkpoints/
-        └── test_outputs/
-```
-
-**Code tự tạo thư mục này trong `train.py`:**
-```python
-from datetime import datetime
-from pathlib import Path
-import shutil
-
-run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-run_dir  = Path(f"runs/{cfg.experiment_name}/{run_name}")
-
-(run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-(run_dir / "test_outputs").mkdir(parents=True, exist_ok=True)
-(run_dir / "logs").mkdir(parents=True, exist_ok=True)
-
-shutil.copy(cfg.config_path, run_dir / "config.yaml")  # lưu snapshot config
+└── multitask_swinunet/
+    └── 2026-09-28_11-00-00/
 ```
 
 ---
 
-## 🔄 Luồng hoạt động tổng thể
+## 📊 Quick Lookup Table: "Which file should I modify?"
 
-```
-[Bạn chỉnh config.yaml]
-        ↓
-[Chạy: python experiments/segfirst_vmunet/train.py]
-        ↓
-        ├── import models/vmunet      (kiến trúc gốc)
-        ├── import src/dataset.py     (data loader chung)
-        ├── import src/losses.py      (hoặc experiments/.../losses.py nếu có)
-        └── import src/metrics.py
-        ↓
-[Tự tạo: runs/segfirst_vmunet/2026-09-18_14-30-00/]
-        ├── checkpoints/best.pth
-        ├── logs/train_log.csv
-        └── test_outputs/img_*.png
-```
+| Task | File Path |
+|---|---|
+| Add a new backbone architecture | `git submodule add` into `models/` |
+| Modify shared Multi-Task DataLoader | `src/dataset_multitask.py` |
+| Add a new shared loss function | `src/losses.py` |
+| Override loss for 1 specific experiment | `experiments/<exp_name>/losses.py` |
+| Change learning rate, batch size, epochs | `experiments/<exp_name>/config.py` |
+| Modify dual-head branching architecture | `experiments/<exp_name>/model.py` |
+| Check results of a past training run | `runs/<exp_name>/<timestamp>/` |
+| Compare metrics across runs | Open `runs/<exp_name>/<timestamp>/logs/train_log.csv` |
 
 ---
 
-## 📊 Bảng tra cứu nhanh: "Tôi cần làm gì thì mở file nào?"
+## 🚫 Critical Rules
 
-| Tôi muốn... | Mở file ở đâu |
-|-------------|---------------|
-| Thêm model mới | `git submodule add` vào `models/` |
-| Sửa cách load dataset (tất cả model) | `src/dataset.py` |
-| Thêm loss function mới dùng chung | `src/losses.py` |
-| Thêm loss riêng cho 1 experiment | `experiments/<tên>/losses.py` |
-| Chỉnh hyperparameter, learning rate | `experiments/<tên>/config.yaml` |
-| Xem kết quả lần train cũ | `runs/<tên>/<timestamp>/` |
-| So sánh 2 lần train | Mở 2 file `runs/.../logs/train_log.csv` |
-| Xem ảnh dự đoán | `runs/<tên>/<timestamp>/test_outputs/` |
-
----
-
-## 🚫 Quy tắc KHÔNG được làm
-
-- ❌ Không sửa code trong `models/` (repo gốc của tác giả)
-- ❌ Không copy-paste `dataset.py` hay `losses.py` giữa các experiment
-- ❌ Không lưu checkpoint hay ảnh kết quả trong `experiments/` hoặc `src/`
-- ❌ Không commit thư mục `runs/` lên git (thêm vào `.gitignore`)
-
-```gitignore
-# .gitignore
-runs/
-__pycache__/
-*.pyc
-.venv/
-```
+- ❌ **Never modify code inside `models/` directly** (Upstream submodules).
+- ❌ **Never duplicate `dataset.py` or `losses.py` across experiments** when shared logic belongs in `src/`.
+- ❌ **Never write checkpoints or generated images inside `experiments/` or `src/`**.
+- ❌ **Never commit the `runs/` directory to Git** (enforced by `.gitignore`).
