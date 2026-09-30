@@ -24,10 +24,10 @@ import torch.nn.functional as F
 # Resolve VM-UNet import path (models/vmunet/ at project root)
 _HERE = Path(__file__).resolve().parent                         # experiments/segfirst_vmunet/
 _PROJECT_ROOT = _HERE.parent.parent                             # Silkworm_Segmentation/
-_VMUNET_DIR = _PROJECT_ROOT / "models" / "vmunet"              # models/vmunet/ (repo gốc)
+_VMUNET_DIR = _PROJECT_ROOT / "models" / "vmunet" / "models"   # chứa package vmunet/ (repo gốc)
 sys.path.insert(0, str(_VMUNET_DIR))
 
-from models.vmunet.vmamba import VSSM  # noqa: E402
+from vmunet.vmamba import VSSM  # noqa: E402
 
 
 class ClassificationHead(nn.Module):

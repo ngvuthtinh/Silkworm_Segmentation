@@ -1,0 +1,2 @@
+project-includes = ["src", "experiments", "utils"]
+search-path = [".", "models/vmunet/models", "models/swin_unet"]

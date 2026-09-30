@@ -26,13 +26,13 @@ import torch.nn.functional as F
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent.parent
-_VMUNET_DIR = _PROJECT_ROOT / "models" / "vmunet"
+_VMUNET_DIR = _PROJECT_ROOT / "models" / "vmunet" / "models"
 if str(_VMUNET_DIR) not in sys.path:
     sys.path.insert(0, str(_VMUNET_DIR))
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from models.vmunet.vmamba import VSSM
+from vmunet.vmamba import VSSM
 
 
 class ClassificationHead(nn.Module):
@@ -150,7 +150,8 @@ class MultiTaskVMUNet(nn.Module):
             )
 
         bot_feat = self._bottleneck_feat
-        bot_feat = self._to_spatial(bot_feat, x.shape[-2:])
+        assert bot_feat is not None, "Forward hook on backbone.layers[3] did not fire."
+        bot_feat = self._to_spatial(bot_feat, (x.shape[-2], x.shape[-1]))
         class_logits = self.cls_head(bot_feat)
 
         return mask_pred, class_logits
