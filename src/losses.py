@@ -21,6 +21,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.dataset_multitask import IGNORE_LABEL
+
 
 class DiceLoss(nn.Module):
     """Soft Dice Loss for binary segmentation."""
@@ -61,15 +63,36 @@ class SegLoss(nn.Module):
         return self.w_bce * loss_bce + self.w_dice * loss_dice
 
 
+def masked_cross_entropy(
+    class_logits: torch.Tensor,
+    class_gt: torch.Tensor,
+    label_smoothing: float = 0.0,
+    ignore_index: int = IGNORE_LABEL,
+) -> torch.Tensor:
+    """
+    CrossEntropy chỉ tính trên các mẫu CÓ nhãn bệnh (class_gt != ignore_index).
+
+    Ảnh Silkynet không có nhãn bệnh (-1) sẽ không đóng góp gradient cho head phân loại,
+    nhưng vẫn huấn luyện head phân đoạn bình thường. Nếu cả batch không có nhãn, trả về 0
+    (có gradient graph) thay vì NaN — vì CE mean-reduction trên tập rỗng cho ra NaN.
+    """
+    valid = class_gt != ignore_index
+    if not valid.any():
+        return class_logits.sum() * 0.0
+    return F.cross_entropy(
+        class_logits[valid], class_gt[valid], label_smoothing=label_smoothing
+    )
+
+
 class ClsLoss(nn.Module):
-    """CrossEntropyLoss for binary classification."""
+    """CrossEntropyLoss for binary classification (bỏ qua mẫu không có nhãn = -1)."""
 
     def __init__(self, label_smoothing: float = 0.0):
         super().__init__()
-        self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        self.label_smoothing = label_smoothing
 
     def forward(self, class_logits: torch.Tensor, class_gt: torch.Tensor) -> torch.Tensor:
-        return self.ce(class_logits, class_gt)
+        return masked_cross_entropy(class_logits, class_gt, self.label_smoothing)
 
 
 class SegFirstMultiTaskLoss(nn.Module):

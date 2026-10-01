@@ -39,6 +39,8 @@ if str(ROOT / "models" / "vmunet") not in sys.path:
     sys.path.insert(0, str(ROOT / "models" / "vmunet"))
 
 from src.dataset_multitask import MultitaskSilkwormDataset
+from src.losses import masked_cross_entropy
+from src.metrics import masked_cls_correct
 from experiments.multitask_vmunet.model import MultiTaskVMUNet
 
 # ─── Hàm mất mát ──────────────────────────────────────────────────────────────
@@ -63,7 +65,7 @@ class MultitaskLoss(nn.Module):
         self.lambda_cls = lambda_cls
         self.bce  = nn.BCEWithLogitsLoss()
         self.dice = DiceLoss()
-        self.ce   = nn.CrossEntropyLoss(label_smoothing=0.05)
+        self.label_smoothing = 0.05
 
     def forward(
         self,
@@ -75,7 +77,8 @@ class MultitaskLoss(nn.Module):
         l_bce  = self.bce(mask_logits, mask_gt)
         l_dice = self.dice(torch.sigmoid(mask_logits), mask_gt)
         l_seg  = l_bce + l_dice
-        l_cls  = self.ce(cls_logits, cls_gt)
+        # Ảnh không có nhãn bệnh (Silkynet, cls_gt == -1) bị bỏ qua ở loss phân loại
+        l_cls  = masked_cross_entropy(cls_logits, cls_gt, self.label_smoothing)
         total  = self.lambda_seg * l_seg + self.lambda_cls * l_cls
         return total, l_seg, l_cls
 
@@ -87,10 +90,6 @@ def dice_score(pred_logits: torch.Tensor, target: torch.Tensor, thresh: float = 
     inter = (pred * target).sum()
     denom = pred.sum() + target.sum()
     return (2.0 * inter / (denom + 1e-6)).item()
-
-
-def cls_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> float:
-    return (logits.argmax(1) == labels).float().mean().item()
 
 
 # ─── Training ─────────────────────────────────────────────────────────────────
@@ -187,8 +186,9 @@ def train(args: argparse.Namespace) -> None:
             break
 
         model.eval()
-        val_dice = val_acc = 0.0
+        val_dice = 0.0
         v_steps  = 0
+        cls_correct = cls_total = 0
         with torch.no_grad():
             for imgs, masks, labels in tqdm(dl_val, desc=f"  → [VM-UNet] Val ", ncols=110, leave=False):
                 imgs   = imgs.to(device)
@@ -197,11 +197,13 @@ def train(args: argparse.Namespace) -> None:
                 with autocast(device_type="cuda"):
                     mask_logits, cls_logits = model(imgs)
                 val_dice += dice_score(mask_logits, masks)
-                val_acc  += cls_accuracy(cls_logits, labels)
+                c, n = masked_cls_correct(cls_logits, labels)
+                cls_correct += c
+                cls_total   += n
                 v_steps  += 1
 
         val_dice /= v_steps
-        val_acc  /= v_steps
+        val_acc   = cls_correct / max(cls_total, 1)   # chỉ tính trên ảnh có nhãn bệnh
         combined  = 0.7 * val_dice + 0.3 * val_acc
 
         best_tag = ""

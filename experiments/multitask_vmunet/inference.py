@@ -51,9 +51,9 @@ def infer_single(
     tensor = tensor.to(device)
 
     model.eval()
-    mask_pred, cls_logits = model(tensor)
+    mask_logits, cls_logits = model(tensor)
 
-    mask_prob = mask_pred.squeeze().cpu().numpy()
+    mask_prob = torch.sigmoid(mask_logits).squeeze().cpu().numpy()
     orig_w, orig_h = img_orig.size
     mask_prob_full = np.array(
         Image.fromarray((mask_prob * 255).astype(np.uint8)).resize((orig_w, orig_h), Image.BILINEAR)

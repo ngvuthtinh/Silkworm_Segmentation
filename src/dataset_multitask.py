@@ -4,7 +4,8 @@ src/dataset_multitask.py — Unified Multi-Task Dataset
 
 Đọc trực tiếp từ data/Silkworm_mixed_dataset_10k (hoặc bất kỳ dataset nào cùng cấu trúc).
 Mỗi mẫu trả về: (image_tensor, binary_mask_tensor, class_label)
-  - class_label: 0 = Grasserie (Bệnh), 1 = Healthy (Khỏe)
+  - class_label: 0 = Grasserie (Bệnh), 1 = Healthy (Khỏe),
+                 -1 = KHÔNG CÓ NHÃN BỆNH (vd. ảnh Silkynet) → loss/metric phân loại phải bỏ qua
   - binary_mask: 0 = nền, 1 = thân tằm
 
 Thiết kế để dùng chung cho cả VM-UNet, Swin-UNet và Mask2Former.
@@ -21,6 +22,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+
+# Nhãn đặc biệt cho ảnh không có thông tin bệnh (dùng làm ignore_index trong CrossEntropy)
+IGNORE_LABEL = -1
 
 # Mean/Std ImageNet chuẩn
 _MEAN = [0.485, 0.456, 0.406]
@@ -91,7 +95,12 @@ class MultitaskSilkwormDataset(Dataset):
 
     @staticmethod
     def _read_class(lbl_p: Path, stem: str) -> int:
-        """Đọc class_id từ dòng đầu YOLO label txt. Fallback: suy ra từ tên file."""
+        """
+        Đọc class_id từ dòng đầu YOLO label txt.
+        Fallback: suy ra từ tên file ('healthy' → 1, 'grasserie' → 0).
+        Không suy ra được (vd. ảnh Silkynet tên số, không có label) → IGNORE_LABEL,
+        tuyệt đối không đoán là bệnh.
+        """
         if lbl_p.exists():
             try:
                 with open(lbl_p) as f:
@@ -104,7 +113,9 @@ class MultitaskSilkwormDataset(Dataset):
         name_lower = stem.lower()
         if "healthy" in name_lower:
             return 1
-        return 0  # mặc định Grasserie
+        if "grasserie" in name_lower:
+            return 0
+        return IGNORE_LABEL
 
     def __len__(self) -> int:
         return len(self.samples)

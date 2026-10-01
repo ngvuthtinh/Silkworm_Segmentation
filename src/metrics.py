@@ -17,6 +17,20 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 
+def masked_cls_correct(
+    class_logits: torch.Tensor,
+    class_gt: torch.Tensor,
+    ignore_index: int = -1,
+) -> tuple[int, int]:
+    """
+    Đếm (số dự đoán đúng, số mẫu có nhãn) — bỏ qua mẫu không có nhãn bệnh (-1).
+    Cộng dồn qua các batch rồi chia ở cuối epoch để accuracy không bị lệch theo kích thước batch.
+    """
+    valid = class_gt != ignore_index
+    correct = (class_logits.argmax(1)[valid] == class_gt[valid]).sum().item()
+    return int(correct), int(valid.sum().item())
+
+
 def evaluate_seg(
     model: nn.Module,
     loader: DataLoader,

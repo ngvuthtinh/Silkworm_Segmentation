@@ -3,15 +3,15 @@ model.py — Multi-Task VM-UNet
 
 Architecture:
     Backbone : VSSM (from models/vmunet/models/vmunet/vmamba.py)
-    Seg head : 1×1 Conv → sigmoid  → mask_pred  [B, 1, H, W]
-    Cls head : GAP → FC(256) → FC(2) → class_logits [B, 2]
+    Seg head : VSSM decoder (final 1×1 Conv)  → mask_logits  [B, 1, H, W]
+    Cls head : GAP → FC(256) → FC(2)          → class_logits [B, 2]
 
 The bottleneck feature (deepest encoder stage) is extracted via a
 forward hook registered on `VSSM.layers[3]` so we do NOT modify
 vmamba.py at all.
 
-Returns:
-    (mask_pred, class_logits)
+Returns (forward):
+    (mask_logits, class_logits)  — raw logits; use predict_probs() for probabilities.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class SegmentationHead(nn.Module):
 class MultiTaskVMUNet(nn.Module):
     """
     VM-UNet backbone with two task heads:
-        1. Segmentation head  → mask_pred   (binary sigmoid map)
+        1. Segmentation head  → mask_logits (binary; sigmoid only at inference)
         2. Classification head → class_logits (healthy / diseased)
     """
 
@@ -137,16 +137,20 @@ class MultiTaskVMUNet(nn.Module):
         self._bottleneck_feat = output
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns RAW LOGITS for both tasks (no sigmoid / softmax applied):
+            mask_logits  : [B, num_seg_classes, H, W]
+            class_logits : [B, num_cls_classes]
+
+        Losses (BCEWithLogits, CrossEntropy) expect logits. Apply
+        `torch.sigmoid(mask_logits)` / `torch.softmax(class_logits, 1)` only at
+        inference time — see `predict_probs()`.
+        """
         mask_logits = self.backbone(x)
 
-        if self.num_seg_classes == 1:
-            mask_pred = torch.sigmoid(mask_logits)
-        else:
-            mask_pred = torch.softmax(mask_logits, dim=1)
-
-        if mask_pred.shape[-2:] != x.shape[-2:]:
-            mask_pred = F.interpolate(
-                mask_pred, size=x.shape[-2:], mode="bilinear", align_corners=False
+        if mask_logits.shape[-2:] != x.shape[-2:]:
+            mask_logits = F.interpolate(
+                mask_logits, size=x.shape[-2:], mode="bilinear", align_corners=False
             )
 
         bot_feat = self._bottleneck_feat
@@ -154,7 +158,17 @@ class MultiTaskVMUNet(nn.Module):
         bot_feat = self._to_spatial(bot_feat, (x.shape[-2], x.shape[-1]))
         class_logits = self.cls_head(bot_feat)
 
-        return mask_pred, class_logits
+        return mask_logits, class_logits
+
+    @torch.no_grad()
+    def predict_probs(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Inference helper: (mask probabilities, class probabilities)."""
+        mask_logits, class_logits = self.forward(x)
+        if self.num_seg_classes == 1:
+            mask_probs = torch.sigmoid(mask_logits)
+        else:
+            mask_probs = torch.softmax(mask_logits, dim=1)
+        return mask_probs, torch.softmax(class_logits, dim=1)
 
     @staticmethod
     def _to_spatial(feat: torch.Tensor, img_hw: tuple[int, int]) -> torch.Tensor:

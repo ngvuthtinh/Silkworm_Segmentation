@@ -11,6 +11,9 @@ torchaudio
 # Transformer & Backbone Architectures
 timm>=0.9.0
 einops>=0.7.0
+ml-collections>=0.1.1   # Swin-UNet config
+yacs>=0.1.8             # Swin-UNet config
+h5py>=3.0.0             # Swin-UNet (Synapse dataset utils)
 
 # Image Processing & Augmentation
 numpy
