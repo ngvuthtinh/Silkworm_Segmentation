@@ -121,10 +121,12 @@ class SilkwormObjectBank:
 
         print(f"✅ Đã nạp thành công {len(self.objects)} đối tượng tằm chất lượng cao vào Object Bank!")
 
-    def sample(self) -> Optional[SilkwormCutout]:
-        if not self.objects:
+    def sample(self, class_id: Optional[int] = None) -> Optional[SilkwormCutout]:
+        """Lấy ngẫu nhiên 1 cá thể; nếu `class_id` được cho thì chỉ lấy cá thể cùng lớp."""
+        pool = self.objects if class_id is None else [o for o in self.objects if o.class_id == class_id]
+        if not pool:
             return None
-        return random.choice(self.objects)
+        return random.choice(pool)
 
 
 # =====================================================================
@@ -378,9 +380,12 @@ def generate_single_sample(
     target_mask_dir: Path,
     target_lbl_dir: Path,
     preview_dir: Optional[Path] = None,
+    name_prefix: str = "silkworm_aug10k",
+    same_class_paste: bool = False,
 ) -> bool:
     """
     Tạo một mẫu dữ liệu mới kết hợp ngẫu nhiên các kỹ thuật.
+    `same_class_paste=True`: chỉ dán tằm cùng lớp với ảnh nền để mỗi ảnh có đúng 1 nhãn bệnh.
     """
     img_p, mask_p, base_class_id = base_sample
 
@@ -410,7 +415,7 @@ def generate_single_sample(
     if mode_rand < 0.50 and bank.objects:
         num_pastes = random.choice([1, 2])
         for _ in range(num_pastes):
-            sample_cutout = bank.sample()
+            sample_cutout = bank.sample(base_class_id if same_class_paste else None)
             if sample_cutout:
                 cur_img, cur_mask, instances = paste_silkworm_with_overlap(
                     cur_img, cur_mask, instances, sample_cutout
@@ -440,7 +445,7 @@ def generate_single_sample(
     if cv2.countNonZero(cur_mask) < 150 or not instances:
         return False
 
-    out_stem = f"silkworm_aug10k_{sample_idx:06d}"
+    out_stem = f"{name_prefix}_{sample_idx:06d}"
     out_img_path = target_img_dir / f"{out_stem}.jpg"
     out_mask_path = target_mask_dir / f"{out_stem}.png"
     out_lbl_path = target_lbl_dir / f"{out_stem}.txt"
@@ -469,11 +474,11 @@ def generate_single_sample(
 # 6. THU THẬP NGUỒN DỮ LIỆU VÀ CHẠY TOÀN BỘ QUY TRÌNH
 # =====================================================================
 
-def collect_all_source_samples() -> List[Tuple[Path, Path, int]]:
+def collect_all_source_samples(include_silkynet: bool = True) -> List[Tuple[Path, Path, int]]:
     """
-    Thu thập toàn bộ dữ liệu từ cả 2 nguồn:
+    Thu thập dữ liệu nguồn:
       1. Silkworm_SAM3_Segmented (kèm ảnh từ Silkworm_Yolo_BoundingBox)
-      2. Silkworm_Silkynet_Segmented (larvaTrain + output20221127)
+      2. Silkworm_Silkynet_Segmented (larvaTrain + output20221127) — bỏ qua nếu include_silkynet=False
     """
     samples: List[Tuple[Path, Path, int]] = []
 
@@ -497,7 +502,7 @@ def collect_all_source_samples() -> List[Tuple[Path, Path, int]]:
         (Path("data/Silkworm_Silkynet_Segmented/output20221127/JPEGImages"), Path("data/Silkworm_Silkynet_Segmented/output20221127/SegmentationClassPNG")),
     ]
 
-    for s_img_dir, s_mask_dir in silkynet_pairs:
+    for s_img_dir, s_mask_dir in silkynet_pairs if include_silkynet else []:
         if s_img_dir.exists() and s_mask_dir.exists():
             for img_p in s_img_dir.glob("*.*"):
                 if img_p.suffix.lower() not in {".jpg", ".png", ".jpeg"}:
@@ -523,27 +528,33 @@ def _worker_process_batch(
     target_lbl_dir: Path,
     preview_dir: Optional[Path],
     seed: int,
+    name_prefix: str = "silkworm_aug10k",
+    same_class_paste: bool = False,
 ) -> int:
-    """Worker sinh một batch mẫu."""
+    """Worker sinh một batch mẫu. Mẫu thất bại được thử lại với ảnh nền khác để đủ số lượng."""
     random.seed(seed + worker_id)
     np.random.seed(seed + worker_id)
     augmenter = get_base_spatial_photometric_augmenter()
 
     local_success = 0
     for idx in indices:
-        base_sample = random.choice(source_samples)
-        ok = generate_single_sample(
-            sample_idx=idx,
-            base_sample=base_sample,
-            bank=bank,
-            augmenter=augmenter,
-            target_img_dir=target_img_dir,
-            target_mask_dir=target_mask_dir,
-            target_lbl_dir=target_lbl_dir,
-            preview_dir=preview_dir if idx <= 60 else None,
-        )
-        if ok:
-            local_success += 1
+        for _ in range(10):
+            base_sample = random.choice(source_samples)
+            ok = generate_single_sample(
+                sample_idx=idx,
+                base_sample=base_sample,
+                bank=bank,
+                augmenter=augmenter,
+                target_img_dir=target_img_dir,
+                target_mask_dir=target_mask_dir,
+                target_lbl_dir=target_lbl_dir,
+                preview_dir=preview_dir if idx <= 60 else None,
+                name_prefix=name_prefix,
+                same_class_paste=same_class_paste,
+            )
+            if ok:
+                local_success += 1
+                break
     return local_success
 
 
@@ -555,6 +566,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên")
     parser.add_argument("--workers", type=int, default=8, help="Số worker tiến trình CPU song song")
     parser.add_argument("--dry-run", type=int, default=None, help="Chạy thử nghiệm N mẫu để kiểm tra trước")
+    parser.add_argument("--sam3-only", action="store_true", help="Chỉ dùng nguồn SAM3, bỏ ảnh Silkynet")
+    parser.add_argument("--same-class-paste", action="store_true",
+                        help="Chỉ dán tằm cùng lớp với ảnh nền (mỗi ảnh có đúng 1 nhãn bệnh)")
+    parser.add_argument("--name-prefix", type=str, default="silkworm_aug10k", help="Tiền tố tên file đầu ra")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -571,7 +586,7 @@ def main():
         preview_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Thu thập toàn bộ dữ liệu nguồn
-    source_samples = collect_all_source_samples()
+    source_samples = collect_all_source_samples(include_silkynet=not args.sam3_only)
     if not source_samples:
         raise RuntimeError("Không tìm thấy dữ liệu nguồn từ SAM3 hoặc Silkynet!")
 
@@ -606,6 +621,8 @@ def main():
                         target_lbl_dir,
                         preview_dir,
                         args.seed,
+                        args.name_prefix,
+                        args.same_class_paste,
                     ),
                 )
             )
