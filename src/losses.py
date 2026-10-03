@@ -149,3 +149,45 @@ class SegFirstMultiTaskLoss(nn.Module):
 
         total_loss = self.lambda_seg * l_seg + self.lambda_cls * l_cls
         return total_loss, l_seg, l_cls
+
+
+class InstanceMultiTaskLoss(nn.Module):
+    """
+    Loss cho mô hình phân đoạn TỪNG CON + chẩn đoán TỪNG CON (3 kênh đầu ra theo pixel).
+
+        L = λ_body·(BCE + Dice)(thân) + λ_bnd·(BCE + Dice)(biên) + λ_dis·BCE(bệnh | trong thân)
+
+    - Biên chiếm rất ít pixel nên cần Dice để không bị "học" thành toàn 0.
+    - Loss bệnh chỉ tính trên pixel thuộc thân tằm (GT): nền không có khái niệm khỏe/bệnh.
+    """
+
+    def __init__(self, lambda_body: float = 1.0, lambda_boundary: float = 1.0, lambda_disease: float = 1.0):
+        super().__init__()
+        self.lambda_body = lambda_body
+        self.lambda_boundary = lambda_boundary
+        self.lambda_disease = lambda_disease
+        self.seg = SegLoss()
+
+    def forward(
+        self,
+        logits: torch.Tensor,
+        body_gt: torch.Tensor,
+        boundary_gt: torch.Tensor,
+        disease_gt: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        logits: [B, 3, H, W] — kênh 0 = thân, 1 = biên, 2 = bệnh (logit thô)
+        Trả về (total, l_body, l_boundary, l_disease).
+        """
+        logits = logits.float()
+        l_body = self.seg(logits[:, 0:1], body_gt)
+        l_bnd = self.seg(logits[:, 1:2], boundary_gt)
+
+        inside = body_gt > 0.5
+        if inside.any():
+            l_dis = F.binary_cross_entropy_with_logits(logits[:, 2:3][inside], disease_gt[inside])
+        else:
+            l_dis = logits[:, 2:3].sum() * 0.0
+
+        total = self.lambda_body * l_body + self.lambda_boundary * l_bnd + self.lambda_disease * l_dis
+        return total, l_body, l_bnd, l_dis
