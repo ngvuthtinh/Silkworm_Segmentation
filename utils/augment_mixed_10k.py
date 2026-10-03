@@ -445,6 +445,24 @@ def generate_single_sample(
     if cv2.countNonZero(cur_mask) < 150 or not instances:
         return False
 
+    # Bản đồ từng con (instance id) và bản đồ lớp (0 = nền, 1 = Grasserie, 2 = Healthy).
+    # Mỗi thành phần liền kề của một instance là một con riêng.
+    inst_map = np.zeros(cur_mask.shape, dtype=np.uint16)
+    cls_map = np.zeros(cur_mask.shape, dtype=np.uint8)
+    next_id = 1
+    for inst_m, cls_id in instances:
+        n_cc, cc = cv2.connectedComponents((inst_m > 127).astype(np.uint8))
+        for k in range(1, n_cc):
+            region = cc == k
+            if region.sum() < 80:
+                continue
+            inst_map[region] = next_id
+            cls_map[region] = cls_id + 1
+            next_id += 1
+    if next_id == 1:
+        return False
+    cur_mask = np.where(inst_map > 0, 255, 0).astype(np.uint8)
+
     out_stem = f"{name_prefix}_{sample_idx:06d}"
     out_img_path = target_img_dir / f"{out_stem}.jpg"
     out_mask_path = target_mask_dir / f"{out_stem}.png"
@@ -452,6 +470,8 @@ def generate_single_sample(
 
     cv2.imwrite(str(out_img_path), cur_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
     cv2.imwrite(str(out_mask_path), cur_mask)
+    cv2.imwrite(str(target_mask_dir.parent / "masks_inst" / f"{out_stem}.png"), inst_map)
+    cv2.imwrite(str(target_mask_dir.parent / "masks_cls" / f"{out_stem}.png"), cls_map)
 
     yolo_lines = instances_to_yolo_polygons(instances)
     with open(out_lbl_path, "w", encoding="utf-8") as f:
@@ -474,7 +494,7 @@ def generate_single_sample(
 # 6. THU THẬP NGUỒN DỮ LIỆU VÀ CHẠY TOÀN BỘ QUY TRÌNH
 # =====================================================================
 
-def collect_all_source_samples(include_silkynet: bool = True) -> List[Tuple[Path, Path, int]]:
+def collect_all_source_samples(include_silkynet: bool = True, split: str = "train") -> List[Tuple[Path, Path, int]]:
     """
     Thu thập dữ liệu nguồn:
       1. sam3_seg (kèm ảnh từ yolo_bbox)
@@ -483,8 +503,8 @@ def collect_all_source_samples(include_silkynet: bool = True) -> List[Tuple[Path
     samples: List[Tuple[Path, Path, int]] = []
 
     # 1. Nguồn SAM3
-    sam3_mask_dir = Path("data/sam3_seg/train/masks")
-    yolo_img_dir = Path("data/yolo_bbox/train/images")
+    sam3_mask_dir = Path(f"data/sam3_seg/{split}/masks")
+    yolo_img_dir = Path(f"data/yolo_bbox/{split}/images")
 
     if sam3_mask_dir.exists() and yolo_img_dir.exists():
         for m_p in sam3_mask_dir.glob("*.png"):
@@ -570,6 +590,8 @@ def main():
     parser.add_argument("--same-class-paste", action="store_true",
                         help="Chỉ dán tằm cùng lớp với ảnh nền (mỗi ảnh có đúng 1 nhãn bệnh)")
     parser.add_argument("--name-prefix", type=str, default="silkworm_aug10k", help="Tiền tố tên file đầu ra")
+    parser.add_argument("--split", choices=["train", "valid", "test"], default="train",
+                        help="Split nguồn SAM3 dùng cho ảnh nền và Object Bank (tránh rò rỉ giữa các split)")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -580,20 +602,21 @@ def main():
     target_lbl_dir = args.output_dir / "labels"
     preview_dir = (args.output_dir / "aug_previews") if args.preview else None
 
-    for d in [target_img_dir, target_mask_dir, target_lbl_dir]:
+    for d in [target_img_dir, target_mask_dir, target_lbl_dir,
+              args.output_dir / "masks_inst", args.output_dir / "masks_cls"]:
         d.mkdir(parents=True, exist_ok=True)
     if preview_dir:
         preview_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Thu thập toàn bộ dữ liệu nguồn
-    source_samples = collect_all_source_samples(include_silkynet=not args.sam3_only)
+    source_samples = collect_all_source_samples(include_silkynet=not args.sam3_only, split=args.split)
     if not source_samples:
         raise RuntimeError("Không tìm thấy dữ liệu nguồn từ SAM3 hoặc Silkynet!")
 
     # 2. Xây dựng Object Bank
-    sam3_mask_dir = Path("data/sam3_seg/train/masks")
-    yolo_img_dir = Path("data/yolo_bbox/train/images")
-    bank = SilkwormObjectBank(sam3_mask_dir, yolo_img_dir, max_objects=1200, seed=args.seed)
+    sam3_mask_dir = Path(f"data/sam3_seg/{args.split}/masks")
+    yolo_img_dir = Path(f"data/yolo_bbox/{args.split}/images")
+    bank =SilkwormObjectBank(sam3_mask_dir, yolo_img_dir, max_objects=1200, seed=args.seed)
 
     total_target = args.dry_run if args.dry_run is not None else args.goal
     num_workers = max(1, min(args.workers, os.cpu_count() or 1))
