@@ -477,14 +477,14 @@ def generate_single_sample(
 def collect_all_source_samples(include_silkynet: bool = True) -> List[Tuple[Path, Path, int]]:
     """
     Thu thập dữ liệu nguồn:
-      1. Silkworm_SAM3_Segmented (kèm ảnh từ Silkworm_Yolo_BoundingBox)
-      2. Silkworm_Silkynet_Segmented (larvaTrain + output20221127) — bỏ qua nếu include_silkynet=False
+      1. sam3_seg (kèm ảnh từ yolo_bbox)
+      2. silkynet_seg (larvaTrain + output20221127) — bỏ qua nếu include_silkynet=False
     """
     samples: List[Tuple[Path, Path, int]] = []
 
     # 1. Nguồn SAM3
-    sam3_mask_dir = Path("data/Silkworm_SAM3_Segmented/train/masks")
-    yolo_img_dir = Path("data/Silkworm_Yolo_BoundingBox/train/images")
+    sam3_mask_dir = Path("data/sam3_seg/train/masks")
+    yolo_img_dir = Path("data/yolo_bbox/train/images")
 
     if sam3_mask_dir.exists() and yolo_img_dir.exists():
         for m_p in sam3_mask_dir.glob("*.png"):
@@ -498,8 +498,8 @@ def collect_all_source_samples(include_silkynet: bool = True) -> List[Tuple[Path
 
     # 2. Nguồn Silkynet (larvaTrain & output20221127)
     silkynet_pairs = [
-        (Path("data/Silkworm_Silkynet_Segmented/larvaTrain/img"), Path("data/Silkworm_Silkynet_Segmented/larvaTrain/label")),
-        (Path("data/Silkworm_Silkynet_Segmented/output20221127/JPEGImages"), Path("data/Silkworm_Silkynet_Segmented/output20221127/SegmentationClassPNG")),
+        (Path("data/silkynet_seg/larvaTrain/img"), Path("data/silkynet_seg/larvaTrain/label")),
+        (Path("data/silkynet_seg/output20221127/JPEGImages"), Path("data/silkynet_seg/output20221127/SegmentationClassPNG")),
     ]
 
     for s_img_dir, s_mask_dir in silkynet_pairs if include_silkynet else []:
@@ -561,7 +561,7 @@ def _worker_process_batch(
 def main():
     parser = argparse.ArgumentParser(description="Sinh 10.000 ảnh Silkworm Augmentation nâng cao.")
     parser.add_argument("--goal", type=int, default=10000, help="Mục tiêu số lượng ảnh (mặc định: 10000)")
-    parser.add_argument("--output-dir", type=Path, default=Path("data/Silkworm_mixed_dataset_10k/train"), help="Thư mục xuất kết quả")
+    parser.add_argument("--output-dir", type=Path, default=Path("data/mixed_10k/train"), help="Thư mục xuất kết quả")
     parser.add_argument("--preview", action="store_true", default=True, help="Tạo ảnh xem trước mask overlay")
     parser.add_argument("--seed", type=int, default=42, help="Seed ngẫu nhiên")
     parser.add_argument("--workers", type=int, default=8, help="Số worker tiến trình CPU song song")
@@ -591,8 +591,8 @@ def main():
         raise RuntimeError("Không tìm thấy dữ liệu nguồn từ SAM3 hoặc Silkynet!")
 
     # 2. Xây dựng Object Bank
-    sam3_mask_dir = Path("data/Silkworm_SAM3_Segmented/train/masks")
-    yolo_img_dir = Path("data/Silkworm_Yolo_BoundingBox/train/images")
+    sam3_mask_dir = Path("data/sam3_seg/train/masks")
+    yolo_img_dir = Path("data/yolo_bbox/train/images")
     bank = SilkwormObjectBank(sam3_mask_dir, yolo_img_dir, max_objects=1200, seed=args.seed)
 
     total_target = args.dry_run if args.dry_run is not None else args.goal

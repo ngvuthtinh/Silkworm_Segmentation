@@ -87,8 +87,8 @@ pip install -r requirements.txt
 ```bash
 # Generate high-quality segmentation masks from YOLO bounding boxes using SAM 3
 python utils/sam3_label_from_yolo.py \
-    --input-yaml "data/Silkworm Diseases.v1i.yolo26/data.yaml" \
-    --output-dir "data/Silkworm_SAM3_Segmented" \
+    --input-yaml "data/yolo_bbox/data.yaml" \
+    --output-dir "data/sam3_seg" \
     --prompt "silkworm" \
     --device cuda
 ```
@@ -146,9 +146,9 @@ python models/silkynet/Count_contours.py
 
 Data details are documented in [`DATASET_STRUCTURE.md`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/DATASET_STRUCTURE.md):
 
-- `data/Silkworm Diseases.v1i.yolo26`: YOLO bounding boxes and disease class (`0: Grasserie`, `1: Healthy`).
-- `data/Silkworm_SAM3_Segmented`: SAM 3 generated pseudo-masks (`masks/`, `boundaries/`, `labels/`).
-- `data/silkworm_mixed_dataset`: Mixed Multi-Task Dataset (599 train / 110 val / 169 test samples).
+- `data/yolo_bbox`: YOLO bounding boxes and disease class (`0: Grasserie`, `1: Healthy`).
+- `data/sam3_seg`: SAM 3 generated pseudo-masks (`masks/`, `boundaries/`, `labels/`).
+- `data/sam3_aug20k`: SAM3-only augmented Multi-Task Dataset (19,997 train / 499 valid / 498 test). `data/mixed_10k`: older 10k set incl. Silkynet.
 - `models/silkynet/data`: Legacy Silkynet counting dataset.
 
 ### Rules for Dataset Management:

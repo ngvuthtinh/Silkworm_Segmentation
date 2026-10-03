@@ -67,9 +67,11 @@ Silkworm_Segmentation/
 │   └── segfirst_vmunet/     #   Staged baseline run outputs
 │
 ├── data/                    # Datasets (See DATASET_STRUCTURE.md)
-│   ├── Silkworm Diseases.v1i.yolo26/ # Bounding box & disease labels
-│   ├── Silkworm_SAM3_Segmented/      # SAM 3 generated pseudo-masks
-│   └── silkworm_mixed_dataset/       # Mixed Multi-Task dataset
+│   ├── yolo_bbox/                    # Bounding box & disease labels
+│   ├── sam3_seg/                     # SAM 3 generated pseudo-masks
+│   ├── silkynet_seg/                 # Silkynet multi-larvae images + masks
+│   ├── mixed_10k/                    # Augmented 10k (SAM3 + Silkynet)
+│   └── sam3_aug20k/                  # Augmented ~20k (SAM3 only)
 │
 └── utils/                   # Preprocessing & Auto-labeling utilities
     ├── sam3_label_from_yolo.py
@@ -104,8 +106,8 @@ pip install -r requirements.txt
 Generate pixel-accurate binary masks from YOLO bounding boxes:
 ```bash
 python utils/sam3_label_from_yolo.py \
-    --input-yaml "data/Silkworm Diseases.v1i.yolo26/data.yaml" \
-    --output-dir "data/Silkworm_SAM3_Segmented" \
+    --input-yaml "data/yolo_bbox/data.yaml" \
+    --output-dir "data/sam3_seg" \
     --prompt "silkworm" \
     --device cuda
 ```

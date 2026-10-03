@@ -2,7 +2,7 @@
 """
 src/dataset_multitask.py — Unified Multi-Task Dataset
 
-Đọc trực tiếp từ data/Silkworm_mixed_dataset_10k (hoặc bất kỳ dataset nào cùng cấu trúc).
+Đọc trực tiếp từ data/mixed_10k (hoặc bất kỳ dataset nào cùng cấu trúc).
 Mỗi mẫu trả về: (image_tensor, binary_mask_tensor, class_label)
   - class_label: 0 = Grasserie (Bệnh), 1 = Healthy (Khỏe),
                  -1 = KHÔNG CÓ NHÃN BỆNH (vd. ảnh Silkynet) → loss/metric phân loại phải bỏ qua

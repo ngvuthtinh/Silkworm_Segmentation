@@ -95,7 +95,7 @@ def dice_score(pred_logits: torch.Tensor, target: torch.Tensor, thresh: float = 
 # ─── Training ─────────────────────────────────────────────────────────────────
 
 def train(args: argparse.Namespace) -> None:
-    DATA_DIR  = ROOT / "data" / "Silkworm_mixed_dataset_10k"
+    DATA_DIR  = ROOT / "data" / "mixed_10k"
     IMG_SIZE  = 256
     BATCH     = 8 if not args.smoke_test else 2
     EPOCHS    = 40 if not args.smoke_test else 1
