@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-experiments/multitask_vmunet/train.py
+experiments/multitask_vmunet_v1/train.py
 End-to-End Multi-Task VM-UNet Training (Segmentation + Classification).
 
 Goal: Trên 1 tấm ảnh, phân đoạn con tằm VÀ chẩn đoán bệnh cùng lúc.
@@ -9,10 +9,10 @@ Goal: Trên 1 tấm ảnh, phân đoạn con tằm VÀ chẩn đoán bệnh cùn
   - Loss:       Dice + BCE (seg) + CrossEntropy (cls) tối ưu đồng thời trong 1 lần backward
 
 Chạy thử (smoke-test 5 batch):
-  ./.venv/bin/python experiments/multitask_vmunet/train.py --smoke-test
+  ./.venv/bin/python experiments/multitask_vmunet_v1/train.py --smoke-test
 
 Chạy thật:
-  CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python experiments/multitask_vmunet/train.py
+  CUDA_VISIBLE_DEVICES=1 ./.venv/bin/python experiments/multitask_vmunet_v1/train.py
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ if str(ROOT / "models" / "vmunet") not in sys.path:
 from src.dataset_multitask import MultitaskSilkwormDataset
 from src.losses import masked_cross_entropy
 from src.metrics import masked_cls_correct
-from experiments.multitask_vmunet.model import MultiTaskVMUNet
+from experiments.multitask_vmunet_v1.model import MultiTaskVMUNet
 
 # ─── Hàm mất mát ──────────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ def train(args: argparse.Namespace) -> None:
     scaler    = GradScaler()
 
     run_tag  = "smoke_test" if args.smoke_test else datetime.now().strftime("%Y-%m-%d_%H%M")
-    out_dir  = ROOT / "runs" / "multitask_vmunet" / run_tag
+    out_dir  = ROOT / "runs" / "multitask_vmunet_v1" / run_tag
     ckpt_dir = out_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 

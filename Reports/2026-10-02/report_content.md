@@ -34,7 +34,7 @@
 
 ## 3. Thiết lập thực nghiệm (1 phút)
 
-- Checkpoint đánh giá: `multitask_vmunet/2026-09-21_2253` (đầu vào 256 px) và `multitask_swinunet/2026-09-21_2258` (đầu vào 224 px).
+- Checkpoint đánh giá: `multitask_vmunet_v1/2026-09-21_2253` (đầu vào 256 px) và `multitask_swinunet/2026-09-21_2258` (đầu vào 224 px).
 - Ngưỡng mask 0,5. Chỉ số: Dice, IoU, Accuracy, Precision, Recall, F1.
 - Lần đánh giá mới chạy bằng CPU (GPU máy đang bận), nên có thể lệch rất nhỏ so với lần chạy GPU cũ.
 

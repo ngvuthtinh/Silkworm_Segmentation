@@ -11,7 +11,7 @@
 
 ## Run Command
 ```bash
-python -m experiments.multitask_vmunet.train
+python -m experiments.multitask_vmunet_v1.train
 ```
 
-Results are saved to `runs/multitask_vmunet/<timestamp>/`.
+Results are saved to `runs/multitask_vmunet_v1/<timestamp>/`.

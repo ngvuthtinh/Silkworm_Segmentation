@@ -2,7 +2,7 @@
 train.py — Joint Multi-Task Training for VM-UNet (Segmentation + Classification).
 
 Trains VM-UNet on both segmentation and classification simultaneously.
-Results are saved to: runs/multitask_vmunet/<timestamp>/
+Results are saved to: runs/multitask_vmunet_v1/<timestamp>/
     ├── checkpoints/    ← best.pth, latest.pth
     ├── logs/           ← TensorBoard events & training log
     └── visualizations/ ← Prediction sample plots
@@ -32,8 +32,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 # ── Experiment-local imports ──────────────────────────────────────────────────
-from experiments.multitask_vmunet.config import MultiTaskConfig
-from experiments.multitask_vmunet.model import MultiTaskVMUNet
+from experiments.multitask_vmunet_v1.config import MultiTaskConfig
+from experiments.multitask_vmunet_v1.model import MultiTaskVMUNet
 
 # ── Shared src imports ────────────────────────────────────────────────────────
 from src.dataset import SilkynetSegDataset, YOLOClsDataset

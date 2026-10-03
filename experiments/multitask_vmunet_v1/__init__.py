@@ -1,5 +1,5 @@
 """
-experiments/multitask_vmunet package.
+experiments/multitask_vmunet_v1 package.
 """
 
 from .config import MultiTaskConfig

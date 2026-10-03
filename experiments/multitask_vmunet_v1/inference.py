@@ -21,8 +21,8 @@ _PROJECT_ROOT = _HERE.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from experiments.multitask_vmunet.model import MultiTaskVMUNet
-from experiments.multitask_vmunet.config import MultiTaskConfig
+from experiments.multitask_vmunet_v1.model import MultiTaskVMUNet
+from experiments.multitask_vmunet_v1.config import MultiTaskConfig
 
 CLASS_NAMES = {0: "Healthy", 1: "Diseased"}
 CLASS_COLORS = {0: "#2ecc71", 1: "#e74c3c"}
@@ -163,11 +163,11 @@ def main() -> None:
     group.add_argument("--image", type=str, help="Path to a single image")
     group.add_argument("--image-dir", type=str, help="Directory of images for batch inference")
 
-    parser.add_argument("--checkpoint", type=str, default="runs/multitask_vmunet/2026-08-28_run1/checkpoints/best.pth",
+    parser.add_argument("--checkpoint", type=str, default="runs/multitask_vmunet_v1/2026-08-28_run1/checkpoints/best.pth",
                         help="Path to model checkpoint (.pth)")
     parser.add_argument("--mask-dir", type=str, default=None,
                         help="Optional GT mask directory")
-    parser.add_argument("--output-dir", type=str, default="runs/multitask_vmunet/inference_output",
+    parser.add_argument("--output-dir", type=str, default="runs/multitask_vmunet_v1/inference_output",
                         help="Directory to save visualisation images")
     parser.add_argument("--img-size", type=int, default=128)
     parser.add_argument("--threshold", type=float, default=0.5)

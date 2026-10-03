@@ -79,7 +79,7 @@ class MultiTaskConfig:
         if not self.work_dir:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             self.work_dir = os.path.join(
-                "runs", "multitask_vmunet", timestamp
+                "runs", "multitask_vmunet_v1", timestamp
             )
         if self.T_max == 50 and self.epochs != 50:
             self.T_max = self.epochs
