@@ -3,10 +3,15 @@
 # Models supported: Swin-UNet, VM-UNet, Silkynet
 # ==============================================================================
 
-# Core PyTorch (Adjust CUDA version if needed on different platforms)
-torch>=2.0.0
-torchvision>=0.15.0
-torchaudio
+# Core PyTorch — pinned to 2.4.1 / CUDA 12.4 because the prebuilt mamba_ssm wheel below only exists for torch 2.4.
+#   pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu124
+torch==2.4.1
+torchvision==0.19.1
+
+# VM-UNet fast selective_scan CUDA kernel (install separately, without dependencies):
+#   pip install --no-deps "https://github.com/state-spaces/mamba/releases/download/v2.2.2/mamba_ssm-2.2.2+cu122torch2.4cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
+packaging
+ninja
 
 # Transformer & Backbone Architectures
 timm>=0.9.0

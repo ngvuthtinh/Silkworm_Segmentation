@@ -2,6 +2,7 @@
 # Python Environment & Cache
 # ==========================================
 .venv/
+.venv-*/
 venv/
 env/
 ENV/
