@@ -1,181 +1,142 @@
-# 🐛 CLAUDE.md — Silkworm Multi-Task Segmentation & Disease Detection Framework
+# 🐛 CLAUDE.md — Silkworm Per-Larva Segmentation & Disease Detection
 
-This document serves as the primary guidance file for AI Assistants (Claude / Antigravity) and developers working on the **Silkworm Segmentation & Disease Detection** repository.
+This document is the primary guidance file for AI Assistants (Claude / Antigravity) and developers working on this repository.
 
 ---
 
 ## 🎯 1. Project Goal & Overview
 
-- **Primary Goal**: A high-performance **End-to-End Joint Multi-Task Deep Learning Framework** designed to perform two simultaneous tasks from a single silkworm image:
-  1. **Binary Body Segmentation**: Predicting pixel-level masks of silkworm bodies (`[B, 1, H, W]`).
-  2. **Disease Classification**: Classifying silkworm health status as **Healthy (0)** or **Grasserie Disease (1)** (`[B, 2]`).
-- **Core Architectural Design**:
-  - **Shared Encoder Backbone**: Uses State-of-the-Art backbones (Visual Mamba / **VM-UNet** or Vision Transformer / **Swin-UNet**) to extract joint spatial representations.
-  - **Dual Task Heads (Branching Architecture)**:
-    - **Segmentation Head**: Conv decoder branching out to reconstruct the dense binary mask.
-    - **Classification Head**: Bottleneck features extracted via forward hooks (or deepest encoder layer), routed through Global Average Pooling (GAP) + Fully Connected (FC) layers.
-  - **Joint Multi-Task Loss**:
-    $$\mathcal{L}_{\text{total}} = \lambda_{\text{seg}} \cdot \mathcal{L}_{\text{seg}} + \lambda_{\text{cls}} \cdot \mathcal{L}_{\text{cls}}$$
-    Trained end-to-end simultaneously so that shared features capture both geometric body contours and pathological disease indicators.
-- **Auxiliary Tools & Models**:
-  - **SAM 3 (Segment Anything Model 3)**: Automatically generates high-precision ground-truth pseudo-masks from YOLO bounding box labels.
-  - **Silkynet**: Classical/CNN contour detection baseline for larva counting.
+- **Use case**: a silkworm production line. Larvae pass under a camera; for every photo the system must **find each larva individually** — even when larvae touch or overlap — and **decide for each larva whether it is Healthy or has Grasserie disease**.
+- **Primary model**: **VM-UNet** (Visual Mamba) trained as a **multi-task** network with one shared encoder–decoder and **three per-pixel outputs** (`[B, 3, H, W]`):
+  1. **Body** — is this pixel part of a larva?
+  2. **Boundary** — is this pixel on the contour of a larva? (separates touching/overlapping larvae)
+  3. **Disease** — does this pixel belong to a Grasserie larva?
+- **Per-larva post-processing** (`src/metrics.py::split_instances`): seeds = body − boundary → watershed back over the body → one region per larva → mean disease probability over the region decides **Healthy / Grasserie for that larva**.
+- **Joint loss**:
+  $$\mathcal{L} = \lambda_{\text{body}}(\text{BCE}+\text{Dice}) + \lambda_{\text{bnd}}(\text{BCE}+\text{Dice}) + \lambda_{\text{dis}}\,\text{BCE}_{\text{inside body}}$$
+- **Class convention**: `0 = Grasserie`, `1 = Healthy` (label files); in `masks_cls`: `0 = background`, `1 = Grasserie`, `2 = Healthy`.
+- **Auxiliary tools**: **SAM 3** generates pseudo-masks from YOLO boxes. **Silkynet is no longer used** (multi-larva images without disease labels).
+- **Legacy**: `experiments/multitask_vmunet_v1` / `multitask_swinunet` (binary mask + one disease label per image) and `segfirst_*` are kept only to reproduce earlier reports; they are not developed further.
 
 ---
 
 ## 🏗️ 2. Repository 4-Tier Architecture
 
-The project strictly follows a **4-Tier Modular Separation Design** (detailed in [`PROJECT_STRUCTURE.md`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/PROJECT_STRUCTURE.md)):
+Detailed in [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md):
 
 ```text
 Silkworm_Segmentation/
-├── models/          ← [TIER 1] Upstream Original Backbones (READ-ONLY / Submodules)
-├── src/             ← [TIER 2] Shared Core Code (Dataset, Losses, Metrics, Visualizer)
-├── experiments/     ← [TIER 3] Experiment Wrappers & Pipelines (Config, Model, Train, Eval)
-└── runs/            ← [TIER 4] Automatically Generated Artifacts (Checkpoints, Logs, Visuals)
+├── models/          ← [TIER 1] Upstream backbones (do not edit)
+├── src/             ← [TIER 2] Shared code: datasets, losses, metrics
+├── experiments/     ← [TIER 3] One folder per experiment (config, model, train, evaluate, inference)
+├── runs/            ← [TIER 4] Auto-generated checkpoints & logs (never commit)
+├── data/            ← Datasets (never commit) — see DATASET_STRUCTURE.md
+└── utils/           ← Data generation scripts (SAM 3 labelling, augmentation)
 ```
 
-### 🔒 Tier Rules & Responsibilities:
-
-1. **TIER 1 — `models/` (Upstream Models)**:
-   - Contains original author repositories (`vmunet`, `swin_unet`, `sam3`, `silkynet`).
-   - 🔒 **STRICTLY READ-ONLY**: Do NOT modify files inside `models/` directly. Wrap backbones inside Tier 3 (`experiments/<exp_name>/model.py`).
-2. **TIER 2 — `src/` (Shared Modules)**:
-   - Maintained core logic shared across all experiments:
-     - [`src/dataset_multitask.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/dataset_multitask.py): Multi-task DataLoaders (`SilkwormMultiTaskDataset`).
-     - [`src/losses.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/losses.py): `DiceLoss`, `SegLoss`, `ClsLoss`, `JointMultiTaskLoss`.
-     - [`src/metrics.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/metrics.py): Segmentation (Dice, IoU) and Classification (Accuracy, F1, Precision, Recall).
-3. **TIER 3 — `experiments/` (Experiment Wrappers)**:
-   - Each subdirectory represents an independent experiment approach (`multitask_vmunet`, `multitask_swinunet`, `segfirst_vmunet`).
-   - Every experiment directory contains:
-     - `config.py`: Hyperparameter dataclass.
-     - `model.py`: Multi-task model definition connecting `models/` backbone with task heads.
-     - `train.py`: Training loop script.
-     - `evaluate.py`: Test dataset evaluation script.
-     - `inference.py`: Prediction & visualization script for new unseen images.
-     - `notes.md`: Experiment logs and observations.
-   - **Override Mechanism**: If an experiment needs custom losses or augmentations, create `experiments/<exp_name>/losses.py` and use fallback imports:
-     ```python
-     try:
-         from .losses import CustomLoss
-     except ImportError:
-         from src.losses import CustomLoss
-     ```
-4. **TIER 4 — `runs/` (Generated Artifacts)**:
-   - 🤖 **Auto-generated during training**. Never write code here and never commit to Git.
-   - Automatically organized by timestamp: `runs/<exp_name>/<YYYY-MM-DD_HH-MM-SS>/` containing:
-     - `checkpoints/`: Model weights (`best_model.pth`, `last_model.pth`).
-     - `logs/`: CSV metrics (`train_log.csv`) and TensorBoard logs.
-     - `test_outputs/`: Visualizations of predictions vs. ground truth.
-     - `config.yaml`: Snapshot of hyperparameters used during that run.
+### 🔒 Tier Rules
+1. **`models/`** (`vmunet`, `swin_unet`, `sam3`, `silkynet`): upstream code. Do **not** modify; wrap backbones in `experiments/<exp>/model.py`.
+2. **`src/`**: shared modules
+   - [`src/dataset_instance.py`](src/dataset_instance.py): `InstanceSilkwormDataset` → `(image, body, boundary, disease, inst)`.
+   - [`src/losses.py`](src/losses.py): `InstanceMultiTaskLoss` (+ legacy `SegLoss`, `ClsLoss`, `SegFirstMultiTaskLoss`).
+   - [`src/metrics.py`](src/metrics.py): `split_instances`, `match_instances`, `summarize_instance_counts` (+ legacy Dice/accuracy helpers).
+   - [`src/dataset_multitask.py`](src/dataset_multitask.py): legacy image-level dataset.
+3. **`experiments/`**: each folder has `config.py`, `model.py`, `train.py`, `evaluate.py`, (`inference.py`), `notes.md`. Experiment-specific overrides use the fallback import pattern:
+   ```python
+   try:
+       from .losses import CustomLoss
+   except ImportError:
+       from src.losses import CustomLoss
+   ```
+4. **`runs/<exp>/<YYYY-MM-DD_HH-MM-SS>/`**: `checkpoints/{best,last}.pth`, `logs/train_log.csv`, `config.yaml`.
 
 ---
 
-## 🛠️ 3. Essential Commands & Workflows
+## 🛠️ 3. Essential Commands
 
-### 3.1. Environment Setup
+> ⚠️ Always run scripts **as modules from the project root**: `python -m experiments.<exp>.<script>`.
+
+### 3.1. Environment
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+source .venv/bin/activate   # Python 3.12, torch 2.4.1 + CUDA 12.4, mamba_ssm 2.2.2 (fast selective_scan kernel)
 ```
-> ⚠️ **VMamba CUDA Extension**: VM-UNet requires the C++/CUDA `selective_scan` module. See instructions in [`models/vmunet/README.md`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/models/vmunet/README.md).
+- VM-UNet needs the CUDA `selective_scan` kernel from `mamba_ssm`. Without it `vmamba.py` falls back to a pure-PyTorch loop: ~18 s per step instead of ~0.1 s (batch 8, 256²). At startup you must see `[VMAMBA] Fast C++ CUDA selective_scan_fn loaded successfully!`.
+- torch is pinned to 2.4.1 because prebuilt `mamba_ssm` wheels only exist up to torch 2.4 (the server's `nvcc` 11.3 cannot build it for newer CUDA). Install steps: see README.
 
-### 3.2. Data Preparation & Pseudo-Mask Generation
+### 3.2. Data
 ```bash
-# Generate high-quality segmentation masks from YOLO bounding boxes using SAM 3
-python utils/sam3_label_from_yolo.py \
-    --input-yaml "data/yolo_bbox/data.yaml" \
-    --output-dir "data/sam3_seg" \
-    --prompt "silkworm" \
-    --device cuda
+# SAM 3 pseudo-masks from YOLO boxes
+python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir data/sam3_seg --prompt silkworm --device cuda
+
+# Augmented per-larva dataset (one call per split; sources never cross splits)
+python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000 --workers 24 --seed 42
 ```
 
-### 3.3. Training Experiments
-> ⚠️ **CRITICAL RULE**: Always execute python scripts as modules (`python -m ...`) from the project root (`Silkworm_Segmentation/`).
-
+### 3.3. Train / evaluate (primary experiment)
 ```bash
-# Train End-to-End Multi-Task VM-UNet (Primary Architecture)
-python -m experiments.multitask_vmunet.train
-
-# Train End-to-End Multi-Task Swin-UNet
-python -m experiments.multitask_swinunet.train
-
-# Train SegFirst VM-UNet Baseline
-python -m experiments.segfirst_vmunet.train
+python -m experiments.multitask_vmunet.train --smoke-test --gpu 1     # 5 train + 3 val batches
+python -m experiments.multitask_vmunet.train --gpu 1 [--batch-size 4] [--epochs 40]
+python -m experiments.multitask_vmunet.evaluate --checkpoint runs/multitask_vmunet/<run>/checkpoints/best.pth --split test
+python -m experiments.multitask_vmunet.evaluate --checkpoint ... --split test_real
 ```
 
-### 3.4. Evaluation & Inference
-```bash
-# Run inference on test images using trained Multi-Task VM-UNet
-python -m experiments.multitask_vmunet.inference \
-    --checkpoint runs/multitask_vmunet/<run_timestamp>/checkpoints/best_model.pth \
-    --image-dir data/test/ \
-    --output-dir runs/multitask_vmunet/inference_output/
-
-# Count larvae using Silkynet contour analysis
-python models/silkynet/Count_contours.py
-```
-
----
-
-## 🎓 4. Mentor Instructions for AI Assistant (Student-Friendly Guidance)
-
-> 💡 **User Profile Context**: The user is an undergraduate student who is learning deep learning and multi-task learning best practices. The AI assistant must act as a **patient, encouraging, and expert AI Research Mentor**.
-
-### 🤝 AI Mentor Behavioral Guidelines:
-
-1. **Explain the 'Why' Behind Concepts**:
-   - Do not just output code changes. Explain *why* a particular layer, loss function, or hyperparameter is used (e.g., why we use `Dice Loss + BCE` for segmentation, or how `forward_hook` captures bottleneck features without editing source code).
-2. **Step-by-Step Mentorship Workflow**:
-   - **Step 1: Code Verification**: Before suggesting changes, view existing files using `view_file` or `grep_search`. Never guess variable names or class structures.
-   - **Step 2: Guided Action**: Break down tasks into clear steps (Dataset setup -> Model building -> Training -> Metric evaluation).
-   - **Step 3: Verification**: Always verify code syntax or run test commands after making changes.
-   - **Step 4: Result Interpretation**: Teach the student how to read `train_log.csv` (monitoring Dice score vs Loss) and how to diagnose overfitting or loss imbalance.
-
-3. **Common Learning & Debugging Scenarios**:
-   - **Loss Imbalance in Multi-Task**: If segmentation training degrades while classification improves, explain how to adjust loss weights (`lambda_seg` vs `lambda_cls`).
-   - **GPU VRAM / Batch Size**: If CUDA Out of Memory (OOM) occurs, guide the student to lower `batch_size` or enable `amp` (Automatic Mixed Precision) in `config.py`.
-   - **Module Import Errors**: Remind the student to always run scripts using `python -m experiments.<exp_name>.<script>`.
-
----
-
-## 📊 5. Dataset Architecture & Handling
-
-Data details are documented in [`DATASET_STRUCTURE.md`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/DATASET_STRUCTURE.md):
-
-- `data/yolo_bbox`: YOLO bounding boxes and disease class (`0: Grasserie`, `1: Healthy`).
-- `data/sam3_seg`: SAM 3 generated pseudo-masks (`masks/`, `boundaries/`, `labels/`).
-- `data/sam3_aug20k`: SAM3-only augmented Multi-Task Dataset (19,997 train / 499 valid / 498 test). `data/mixed_10k`: older 10k set incl. Silkynet.
-- `models/silkynet/data`: Legacy Silkynet counting dataset.
-
-### Rules for Dataset Management:
-- Raw datasets inside `data/` are **read-only and immutable**.
-- All paths referenced in code must be **relative to project root**.
-- Corresponding image and mask files must maintain identical filenames (`sample_001.jpg` <-> `sample_001.png`).
-
----
-
-## 💻 6. Coding Standards & Conventions
-
-- **Language & Framework**: Python 3.10+, PyTorch >= 2.0.0.
-- **Type Hinting**: Provide explicit type annotations for all function parameters and return values (`def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:`).
-- **Configuration**: Store hyperparameters using Dataclasses in `experiments/<exp_name>/config.py`.
-- **Device Safety**: Use `torch.device("cuda" if torch.cuda.is_available() else "cpu")`.
-- **Reproducibility**: Set seeds (`torch.manual_seed(cfg.seed)`, `np.random.seed(cfg.seed)`) at the start of training scripts.
-
----
-
-## 🔍 7. Quick Reference File Mapping
-
-| Task / Goal | File Location |
+### 3.4. Metrics in `train_log.csv`
+| Column | Meaning |
 |---|---|
-| Adjust Hyperparameters (LR, Batch Size, Epochs) | [`experiments/multitask_vmunet/config.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/experiments/multitask_vmunet/config.py) |
-| Modify Multi-Task Architecture & Dual Heads | [`experiments/multitask_vmunet/model.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/experiments/multitask_vmunet/model.py) |
-| Edit Core Multi-Task DataLoader | [`src/dataset_multitask.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/dataset_multitask.py) |
-| Edit Shared Loss Functions | [`src/losses.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/losses.py) |
-| Edit Evaluation Metrics (Dice, IoU, Accuracy, F1) | [`src/metrics.py`](file:///home/subnh5/nguyenvuthanhtinh/Silkworm_Segmentation/src/metrics.py) |
-| View Saved Models & Checkpoints | `runs/<exp_name>/<timestamp>/checkpoints/` |
-| View Training Logs & Metrics | `runs/<exp_name>/<timestamp>/logs/train_log.csv` |
+| `body_dice` | pixel Dice of the body channel |
+| `inst_f1` | larvae correctly separated (IoU ≥ 0.5), regardless of disease |
+| `cls_acc_matched` | among correctly separated larvae, fraction with the correct diagnosis |
+| `e2e_f1` | separated **and** correctly diagnosed — **main score**, used to pick `best.pth` |
+| `grasserie_recall` | fraction of diseased larvae found and flagged (missing a sick larva is the costly error) |
+
+Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM 3 noise, slivers hidden by leaves).
+
+---
+
+## 🎓 4. Mentor Instructions for AI Assistant
+
+> 💡 The user is an undergraduate student learning deep learning and multi-task learning. Act as a **patient, encouraging, expert research mentor**.
+
+1. **Explain the "why"** — e.g. why Dice is added for the sparse boundary channel, why the disease loss is computed only inside the body, why watershed needs seeds.
+2. **Workflow**: verify existing code before changing it → break work into steps (data → model → training → evaluation) → verify by running code → teach how to read `train_log.csv`.
+3. **Common scenarios**:
+   - **Loss imbalance**: if `inst_f1` stalls while the disease loss drops, raise `lambda_boundary`; if diagnosis lags, raise `lambda_disease`.
+   - **Touching larvae merged**: check the boundary channel and `boundary_thr`; a thicker `boundary_width` separates more but may split thin larvae.
+   - **OOM / slow training**: confirm the fast kernel is loaded first (≈0.1 s/step at batch 8; 40 epochs ≈ 3 h); then lower `--batch-size` or keep `amp=True`. GPUs on the server are shared — check `nvidia-smi`.
+   - **Import errors**: run with `python -m ...` from the project root.
+
+---
+
+## 📊 5. Datasets
+
+See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
+- `data/yolo_bbox` — raw images + boxes + disease class.
+- `data/sam3_seg` — SAM 3 masks.
+- `data/sam3_aug20k` — **primary**: per-larva maps (`masks_inst`, `masks_cls`); splits `train` 20,000 / `valid` 1,000 / `test` 1,000 (synthetic, mixed healthy + diseased, overlapping larvae) and `test_real` 497 (original SAM 3 test images).
+- `data/mixed_10k` — legacy image-level set (known issues, see DATASET_STRUCTURE.md).
+
+Rules: raw data is read-only; paths in code are relative to the project root; `images/<stem>` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.
+
+---
+
+## 💻 6. Coding Standards
+
+- Python 3.12, PyTorch ≥ 2.0; explicit type hints on all functions.
+- Hyperparameters live in dataclasses in `experiments/<exp>/config.py`; each run saves a `config.yaml` snapshot.
+- Device: `torch.device("cuda" if torch.cuda.is_available() else "cpu")`.
+- Reproducibility: set `random`, `np.random`, `torch.manual_seed(cfg.seed)` at the start of training.
+- Commit messages: short, no co-author trailer.
+
+---
+
+## 🔍 7. Quick Reference
+
+| Task | File |
+|---|---|
+| Hyperparameters (LR, batch, epochs, λ, thresholds) | [`experiments/multitask_vmunet/config.py`](experiments/multitask_vmunet/config.py) |
+| Model (3-channel VM-UNet) | [`experiments/multitask_vmunet/model.py`](experiments/multitask_vmunet/model.py) |
+| Dataset / boundary generation | [`src/dataset_instance.py`](src/dataset_instance.py) |
+| Loss | [`src/losses.py`](src/losses.py) → `InstanceMultiTaskLoss` |
+| Per-larva splitting & metrics | [`src/metrics.py`](src/metrics.py) |
+| Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py) |
+| Run outputs | `runs/multitask_vmunet/<timestamp>/` |

@@ -1,162 +1,90 @@
-# 🐛 Silkworm Joint Multi-Task Segmentation & Disease Detection Framework
+# 🐛 Silkworm Per-Larva Segmentation & Disease Detection
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.4-EE4C2C?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Architecture: 4-Tier](https://img.shields.io/badge/Design-4--Tier%20Modular-success)](PROJECT_STRUCTURE.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A high-performance deep learning framework for **joint silkworm body segmentation**, **disease classification** (Grasserie vs. Healthy), and **larva counting**. Built on State-of-the-Art architectures (**VM-UNet / Visual Mamba**, **Swin-UNet**, **SAM 3**, and **Silkynet**).
-
----
-
-## 📌 Features & Key Innovations
-
-- 🔀 **End-to-End Joint Multi-Task Learning**:
-  - Shared encoder backbone extracts rich joint representations.
-  - **Dual Task Heads**: Reconstructs dense binary body segmentation masks (`[B, 1, H, W]`) while simultaneously predicting disease status (`[B, 2]`) from deep bottleneck features.
-  - **Simultaneous Optimization**: Combined multi-task loss $\mathcal{L}_{\text{total}} = \lambda_{\text{seg}} \cdot \mathcal{L}_{\text{seg}} + \lambda_{\text{cls}} \cdot \mathcal{L}_{\text{cls}}$.
-- 🛰️ **VM-UNet (Visual Mamba State-Space Model)**: Fast, long-range receptive field backbone for silkworm body structure.
-- 🎯 **SAM 3 Auto-Labeling Engine**: Fast CUDA generation of pixel-accurate masks directly from YOLO bounding boxes using text prompt grounding (`silkworm`).
-- 🪟 **Swin-UNet**: Shifted-window Vision Transformer multi-task baseline.
-- 🔍 **Silkynet & Counting**: Contour analysis for dense silkworm larvae counting.
-- 📁 **Clean 4-Tier Architecture**: Strict modular separation between Upstream Models, Shared Modules, Experiment Wrappers, and Output Runs.
+Given a photo of silkworm larvae (e.g. on a production line), the system **segments every larva individually — even when larvae touch or overlap — and diagnoses each larva as Healthy or Grasserie**.
 
 ---
 
-## 🏗️ Repository Architecture
+## 📌 Approach
 
-The project follows a strict **4-Tier Modular Design** (detailed in [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)):
+- **VM-UNet (Visual Mamba) multi-task network** with one shared encoder–decoder and three per-pixel outputs:
+  - **Body**: larva vs. background
+  - **Boundary**: contour of each larva — separates touching/overlapping larvae
+  - **Disease**: Grasserie vs. Healthy for every larva pixel
+- **Per-larva post-processing**: (body − boundary) seeds → watershed → one region per larva → mean disease probability → diagnosis per larva.
+- **Joint loss**: λ_body·(BCE + Dice) + λ_boundary·(BCE + Dice) + λ_disease·BCE (inside the body only).
+- **Data**: SAM 3 turns YOLO boxes into pixel masks; an augmentation pipeline composes realistic scenes with several overlapping healthy and diseased larvae, leaf occlusion and photometric changes, and records an instance map + class map per image.
+- **Evaluation per larva**: separation F1 (IoU ≥ 0.5), diagnosis accuracy, end-to-end F1 (separated *and* correctly diagnosed), Grasserie recall.
+
+---
+
+## 🏗️ Repository Layout
 
 ```text
 Silkworm_Segmentation/
-├── models/                  # [TIER 1] Upstream Original Backbones (Submodules / Read-Only)
-│   ├── vmunet/              #   VM-UNet / VMamba backbone repository
-│   ├── swin_unet/           #   Swin-UNet backbone repository
-│   ├── sam3/                #   SAM 3 backbone repository
-│   └── silkynet/            #   Silkynet counting repository & dataset
-│
-├── src/                     # [TIER 2] Shared Reusable Core Modules
-│   ├── dataset.py           #   Single-task DataLoaders (Seg & Cls)
-│   ├── dataset_multitask.py #   Joint Multi-Task DataLoaders (SilkwormMultiTaskDataset)
-│   ├── losses.py            #   Shared Loss functions (DiceLoss, SegLoss, ClsLoss, JointMultiTaskLoss)
-│   ├── metrics.py           #   Evaluation metrics (Dice, IoU, Accuracy, F1, Precision, Recall)
-│   └── visualizer.py        #   Prediction overlay and plotting tools
-│
-├── experiments/             # [TIER 3] Experiment Wrappers & Pipelines
-│   ├── multitask_vmunet/    #   ⭐ Primary Joint Multi-Task VM-UNet Experiment
-│   │   ├── config.py        #     Hyperparameter dataclass
-│   │   ├── model.py         #     Multi-Task wrapper connecting VM-UNet + Dual Heads
-│   │   ├── train.py         #     End-to-end multi-task training pipeline
-│   │   ├── evaluate.py      #     Evaluation script on test split
-│   │   ├── inference.py     #     Inference and visual prediction script
-│   │   └── notes.md         #     Experiment logs and observations
-│   │
-│   ├── multitask_swinunet/  #   Joint Multi-Task Swin-UNet Baseline
-│   │   ├── config.py
-│   │   ├── model.py
-│   │   ├── train.py
-│   │   ├── evaluate.py
-│   │   └── inference.py
-│   │
-│   ├── segfirst_vmunet/     #   Segmentation-First 2-Phase Staged Baseline
-│   └── segfirst_swinunet/   #   Segmentation-First Swin-UNet Baseline
-│
-├── runs/                    # [TIER 4] Automatically Generated Artifacts (Checkpoints & Logs)
-│   ├── multitask_vmunet/    #   Outputs saved per timestamp run
-│   ├── multitask_swinunet/  #   Swin-UNet multi-task run outputs
-│   └── segfirst_vmunet/     #   Staged baseline run outputs
-│
-├── data/                    # Datasets (See DATASET_STRUCTURE.md)
-│   ├── yolo_bbox/                    # Bounding box & disease labels
-│   ├── sam3_seg/                     # SAM 3 generated pseudo-masks
-│   ├── silkynet_seg/                 # Silkynet multi-larvae images + masks
-│   ├── mixed_10k/                    # Augmented 10k (SAM3 + Silkynet)
-│   └── sam3_aug20k/                  # Augmented ~20k (SAM3 only)
-│
-└── utils/                   # Preprocessing & Auto-labeling utilities
-    ├── sam3_label_from_yolo.py
-    └── yolo_bbox_to_masks.py
+├── models/                  # [TIER 1] Upstream backbones (do not edit): vmunet, swin_unet, sam3, silkynet
+├── src/                     # [TIER 2] Shared code
+│   ├── dataset_instance.py  #   Per-larva dataset (body / boundary / disease / instance maps)
+│   ├── dataset_multitask.py #   Legacy image-level dataset
+│   ├── losses.py            #   InstanceMultiTaskLoss (+ legacy losses)
+│   └── metrics.py           #   split_instances, per-larva matching & metrics
+├── experiments/             # [TIER 3] One folder per experiment
+│   ├── multitask_vmunet/     #   ⭐ Primary: per-larva segmentation + diagnosis
+│   ├── multitask_vmunet_v1/    #   Legacy: binary mask + one label per image
+│   ├── multitask_swinunet/  #   Legacy
+│   └── segfirst_*/          #   Legacy staged baselines
+├── runs/                    # [TIER 4] Checkpoints & logs (auto-generated, not committed)
+├── data/                    # Datasets (not committed) — see DATASET_STRUCTURE.md
+│   ├── yolo_bbox/           #   Raw images + YOLO boxes + disease class
+│   ├── sam3_seg/            #   SAM 3 pseudo-masks
+│   ├── sam3_aug20k/         #   ⭐ Per-larva training set (train / valid / test / test_real)
+│   └── mixed_10k/           #   Legacy image-level set
+└── utils/
+    ├── sam3_label_from_yolo.py  # SAM 3 masks from YOLO boxes
+    └── augment_mixed_10k.py     # Scene composition / augmentation
 ```
 
 ---
 
 ## ⚙️ Installation
 
+VM-UNet needs the CUDA `selective_scan` kernel from `mamba_ssm` (~0.1 s/step instead of ~18 s). Prebuilt wheels exist only up to torch 2.4, hence the pinned versions.
+
 ```bash
-# Clone the repository
-git clone https://github.com/ngvuthtinh/Silkworm_Segmentation.git
-cd Silkworm_Segmentation
-
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# Install required dependencies
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu124
+pip install --no-deps "https://github.com/state-spaces/mamba/releases/download/v2.2.2/mamba_ssm-2.2.2+cu122torch2.4cxx11abiFALSE-cp312-cp312-linux_x86_64.whl"
 pip install -r requirements.txt
 ```
-
-> ⚠️ **VMamba CUDA Extension**: To run VM-UNet models on GPU, compile the CUDA extension `selective_scan` according to instructions in [`models/vmunet/README.md`](models/vmunet/README.md).
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Auto-generate Pseudo-Masks using SAM 3
-Generate pixel-accurate binary masks from YOLO bounding boxes:
 ```bash
-python utils/sam3_label_from_yolo.py \
-    --input-yaml "data/yolo_bbox/data.yaml" \
-    --output-dir "data/sam3_seg" \
-    --prompt "silkworm" \
-    --device cuda
+# 1. Pseudo-masks with SAM 3
+python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir data/sam3_seg --prompt silkworm --device cuda
+
+# 2. Build the per-larva dataset (repeat with --split valid/test and a smaller --goal)
+python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000
+
+# 3. Train (always from the project root, as a module)
+python -m experiments.multitask_vmunet.train --smoke-test --gpu 1
+python -m experiments.multitask_vmunet.train --gpu 1
+
+# 4. Evaluate per larva
+python -m experiments.multitask_vmunet.evaluate --checkpoint runs/multitask_vmunet/<run>/checkpoints/best.pth --split test_real
 ```
 
-### 2. Train Multi-Task Experiments
-Always run training scripts as Python modules from the project root:
-
-- **Train Joint Multi-Task VM-UNet (Primary Architecture)**:
-  ```bash
-  python -m experiments.multitask_vmunet.train
-  ```
-
-- **Train Joint Multi-Task Swin-UNet**:
-  ```bash
-  python -m experiments.multitask_swinunet.train
-  ```
-
-*Checkpoints, CSV logs, TensorBoard logs, and visualization outputs are automatically saved to `runs/<exp_name>/<timestamp>/`.*
-
-### 3. Evaluate & Run Inference
-Evaluate a trained checkpoint on the test set:
-```bash
-python -m experiments.multitask_vmunet.evaluate \
-    --checkpoint runs/multitask_vmunet/<run_timestamp>/checkpoints/best_model.pth
-```
-
-Run prediction on a directory of unseen images:
-```bash
-python -m experiments.multitask_vmunet.inference \
-    --checkpoint runs/multitask_vmunet/<run_timestamp>/checkpoints/best_model.pth \
-    --image-dir data/test/ \
-    --output-dir runs/multitask_vmunet/inference_output/
-```
-
-### 4. Larva Counting with Silkynet
-```bash
-python models/silkynet/Count_contours.py
-```
+Outputs go to `runs/multitask_vmunet/<timestamp>/` (`checkpoints/`, `logs/train_log.csv`, `config.yaml`).
 
 ---
 
-## 📖 Detailed Documentation
+## 📖 Documentation
 
-- 📐 [**PROJECT_STRUCTURE.md**](PROJECT_STRUCTURE.md): Detailed 4-Tier design rules, adding new backbones, fallback override logic, and git guidelines.
-- 📊 [**DATASET_STRUCTURE.md**](DATASET_STRUCTURE.md): Dataset organization, YOLO annotation specs, SAM 3 pseudo-masks, and multi-task DataLoaders.
-- 🤖 [**CLAUDE.md**](CLAUDE.md): Developer & AI Assistant guidelines, mentor instructions, and quick command references.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License.
+- [**PROJECT_STRUCTURE.md**](PROJECT_STRUCTURE.md) — 4-tier rules and where to change what.
+- [**DATASET_STRUCTURE.md**](DATASET_STRUCTURE.md) — datasets, formats, generation commands, known issues.
+- [**CLAUDE.md**](CLAUDE.md) — guidance for AI assistants and developers.
