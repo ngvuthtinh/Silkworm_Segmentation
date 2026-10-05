@@ -36,7 +36,7 @@ def run_eval(
     model.eval()
     counts: collections.Counter = collections.Counter()
     inter = denom = 0.0
-    for b, (imgs, body, _bnd, disease, inst) in enumerate(tqdm(loader, desc="  → Eval", ncols=100, leave=False)):
+    for b, (imgs, body, _bnd, disease, inst) in enumerate(tqdm(loader, desc="  → [VAL]  ", ncols=130, leave=False)):
         if max_batches is not None and b >= max_batches:
             break
         with torch.autocast(device_type=device.type, enabled=cfg.amp and device.type == "cuda"):

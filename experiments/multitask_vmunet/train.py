@@ -15,6 +15,7 @@ import argparse
 import csv
 import os
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -53,6 +54,24 @@ def train(args: argparse.Namespace) -> None:
     if args.batch_size:
         cfg.batch_size = args.batch_size
 
+    # --resume: tiếp tục đúng thư mục run cũ (nhận thư mục run hoặc đường dẫn last.pth)
+    resume_ck = None
+    if args.resume:
+        rp = Path(args.resume)
+        if rp.is_dir():
+            rp = rp / "checkpoints" / "last.pth"
+        if not rp.exists():
+            raise FileNotFoundError(f"Không tìm thấy checkpoint để resume: {rp}")
+        cfg.work_dir = str(rp.parent.parent)
+        old_cfg = Path(cfg.work_dir) / "config.yaml"
+        if old_cfg.exists() and not args.smoke_test:
+            saved = yaml.safe_load(old_cfg.read_text())
+            if not args.epochs:
+                cfg.epochs = saved.get("epochs", cfg.epochs)
+            if not args.batch_size:
+                cfg.batch_size = saved.get("batch_size", cfg.batch_size)
+        resume_ck = torch.load(rp, map_location="cpu")
+
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
@@ -65,7 +84,10 @@ def train(args: argparse.Namespace) -> None:
     dl_val = DataLoader(ds_val, cfg.batch_size, shuffle=False, num_workers=cfg.num_workers, pin_memory=True)
 
     model = MultiTaskVMUNet(cfg.depths, cfg.depths_decoder, cfg.drop_path_rate)
-    model.load_pretrained(cfg.pretrained_path)
+    if resume_ck is not None:
+        model.load_state_dict(resume_ck["model"])
+    else:
+        model.load_pretrained(cfg.pretrained_path)
     model.to(device)
 
     loss_fn = InstanceMultiTaskLoss(cfg.lambda_body, cfg.lambda_boundary, cfg.lambda_disease)
@@ -76,19 +98,40 @@ def train(args: argparse.Namespace) -> None:
 
     os.makedirs(cfg.checkpoint_dir, exist_ok=True)
     os.makedirs(cfg.log_dir, exist_ok=True)
-    with open(os.path.join(cfg.work_dir, "config.yaml"), "w") as f:
-        yaml.safe_dump(cfg.to_dict(), f, sort_keys=False, allow_unicode=True)
+    if resume_ck is None:
+        with open(os.path.join(cfg.work_dir, "config.yaml"), "w") as f:
+            yaml.safe_dump(cfg.to_dict(), f, sort_keys=False, allow_unicode=True)
     log_path = os.path.join(cfg.log_dir, "train_log.csv")
 
     print(f"\n🐛 Instance VM-UNet | device {device} | train {len(ds_train)} / val {len(ds_val)} ảnh "
           f"| {sum(p.numel() for p in model.parameters()) / 1e6:.1f}M params | out: {cfg.work_dir}\n")
 
-    best = -1.0
-    for epoch in range(1, cfg.epochs + 1):
+    start_epoch, best = 1, -1.0
+    if resume_ck is not None:
+        start_epoch = resume_ck["epoch"] + 1
+        if "optimizer" in resume_ck:                       # checkpoint đầy đủ → khôi phục y nguyên
+            optimizer.load_state_dict(resume_ck["optimizer"])
+            scheduler.load_state_dict(resume_ck["scheduler"])
+            scaler.load_state_dict(resume_ck["scaler"])
+            best = resume_ck.get("best", -1.0)
+            note = "khôi phục đầy đủ (trọng số, optimizer, scheduler)"
+        else:                                              # checkpoint cũ chỉ có trọng số
+            for _ in range(resume_ck["epoch"]):
+                scheduler.step()                           # đưa LR về đúng vị trí trên đường cosine
+            best_p = os.path.join(cfg.checkpoint_dir, "best.pth")
+            if os.path.exists(best_p):
+                best = torch.load(best_p, map_location="cpu")["val"]["e2e_f1"]
+            note = "chỉ có trọng số → optimizer khởi tạo lại, LR theo scheduler"
+        print(f"♻️  Resume từ epoch {resume_ck['epoch']} → tiếp tục epoch {start_epoch}/{cfg.epochs} | {note} | best E2E F1 = {best:.4f}")
+        if start_epoch > cfg.epochs:
+            print("Đã train đủ số epoch, không còn gì để chạy.")
+            return
+
+    for epoch in range(start_epoch, cfg.epochs + 1):
         model.train()
         n_batches = min(SMOKE_TRAIN_BATCHES, len(dl_train)) if args.smoke_test else len(dl_train)
         sums = np.zeros(4)
-        pbar = tqdm(enumerate(dl_train), total=n_batches, desc=f"Epoch {epoch:02d}/{cfg.epochs}", ncols=110)
+        pbar = tqdm(enumerate(dl_train), total=n_batches, desc=f"Epoch {epoch:02d}/{cfg.epochs} [TRAIN]", ncols=130)
         for i, (imgs, body, bnd, dis, _inst) in pbar:
             if i >= n_batches:
                 break
@@ -103,7 +146,8 @@ def train(args: argparse.Namespace) -> None:
             scaler.step(optimizer)
             scaler.update()
             sums += [loss.item(), l_body.item(), l_bnd.item(), l_dis.item()]
-            pbar.set_postfix(loss=f"{loss.item():.3f}", body=f"{l_body.item():.3f}",
+            overall = ((epoch - 1) + (i + 1) / n_batches) / cfg.epochs * 100
+            pbar.set_postfix(tổng=f"{overall:.1f}%", loss=f"{loss.item():.3f}", body=f"{l_body.item():.3f}",
                              bnd=f"{l_bnd.item():.3f}", dis=f"{l_dis.item():.3f}")
         scheduler.step()
         mean = sums / n_batches
@@ -114,7 +158,8 @@ def train(args: argparse.Namespace) -> None:
             best = val["e2e_f1"]
             torch.save({"epoch": epoch, "model": model.state_dict(), "val": val},
                        os.path.join(cfg.checkpoint_dir, "best.pth"))
-        torch.save({"epoch": epoch, "model": model.state_dict(), "val": val},
+        torch.save({"epoch": epoch, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(), "scaler": scaler.state_dict(), "best": best, "val": val},
                    os.path.join(cfg.checkpoint_dir, "last.pth"))
 
         row = {"epoch": epoch, "lr": scheduler.get_last_lr()[0], "loss": mean[0], "loss_body": mean[1],
@@ -139,6 +184,8 @@ def main() -> None:
     p.add_argument("--gpu", type=str, default="auto", help="Chỉ số GPU hoặc 'auto'")
     p.add_argument("--epochs", type=int, default=None, help="Ghi đè số epoch trong config")
     p.add_argument("--batch-size", type=int, default=None, help="Ghi đè batch size (giảm nếu thiếu VRAM)")
+    p.add_argument("--resume", type=str, default=None,
+                   help="Tiếp tục train: thư mục run (vd runs/multitask_vmunet/2026-10-03_23-12-56) hoặc đường dẫn last.pth")
     train(p.parse_args())
 
 
