@@ -14,6 +14,7 @@ This document is the primary guidance file for AI Assistants (Claude / Antigravi
 - **Per-larva post-processing** (`src/metrics.py::split_instances`): seeds = body − boundary → watershed back over the body → one region per larva → mean disease probability over the region decides **Healthy / Grasserie for that larva**.
 - **Joint loss**:
   $$\mathcal{L} = \lambda_{\text{body}}(\text{BCE}+\text{Dice}) + \lambda_{\text{bnd}}(\text{BCE}+\text{Dice}) + \lambda_{\text{dis}}\,\text{BCE}_{\text{inside body}}$$
+  All terms skip **ignore regions** (`valid = 0`: real larvae without labels, tiny fragments); metrics do not count predictions there as errors.
 - **Class convention**: `0 = Grasserie`, `1 = Healthy` (label files); in `masks_cls`: `0 = background`, `1 = Grasserie`, `2 = Healthy`.
 - **Auxiliary tools**: **SAM 3** generates pseudo-masks from YOLO boxes. **Silkynet is no longer used** (multi-larva images without disease labels).
 - **Legacy**: `experiments/multitask_vmunet_v1` / `multitask_swinunet` (binary mask + one disease label per image) and `segfirst_*` are kept only to reproduce earlier reports; they are not developed further.
@@ -112,10 +113,12 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - `data/yolo_bbox` — raw images + boxes + disease class.
 - `data/sam3_seg` — SAM 3 masks.
-- `data/sam3_aug20k` — **primary**: per-larva maps (`masks_inst`, `masks_cls`); splits `train` 20,000 / `valid` 1,000 / `test` 1,000 (synthetic, mixed healthy + diseased, overlapping larvae) and `test_real` 497 (original SAM 3 test images).
+- `data/sam3_seg_v2` — **clean source**: scene-based split (old Roboflow split leaked ~80% of valid/test), repaired SAM 3 masks, `masks_ignore/` for unlabelled larvae. Built by `utils/build_sam3_seg_v2/`.
+- `data/sam3_aug20k` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`) built from `sam3_seg_v2`; `train` 20,000 / `valid` 1,000 / `test` 1,000 (synthetic) and `test_real` 499 (real photos).
+- `data/sam3_aug20k_v1` — previous set (leaky split, broken masks); only for comparing with the first trained model.
 - `data/mixed_10k` — legacy image-level set (known issues, see DATASET_STRUCTURE.md).
 
-Rules: raw data is read-only; paths in code are relative to the project root; `images/<stem>` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.
+Rules: split by **scene**, never by image (near-identical shots of one larva stay together); raw data is read-only; paths in code are relative to the project root; `images/<stem>` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.
 
 ---
 

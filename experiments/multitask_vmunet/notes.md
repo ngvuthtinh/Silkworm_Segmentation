@@ -7,7 +7,7 @@ Production line: for every photo, find each larva (even touching / overlapping o
 - **Model**: VM-UNet (VSSM) with 3 output channels — body, boundary, disease. One shared encoder–decoder = multi-task.
 - **Loss**: `λ_body·(BCE+Dice) + λ_boundary·(BCE+Dice) + λ_disease·BCE(inside body)`.
 - **Post-processing** (`src/metrics.split_instances`): seeds = body − boundary → watershed over body → one region per larva → mean disease prob → diagnosis.
-- **Data**: `data/sam3_aug20k` (train 20k / valid 1k / test 1k synthetic + test_real 497).
+- **Data**: `data/sam3_aug20k` (built from `data/sam3_seg_v2`: scene-based split, repaired masks, ignore regions) — train 20k / valid 1k / test 1k synthetic + test_real 499.
 - **Model selection**: best validation `e2e_f1` (separated with IoU ≥ 0.5 *and* correct diagnosis).
 
 ## Upper bound of the post-processing
@@ -15,9 +15,11 @@ Ground-truth maps fed as "perfect predictions" (min_area = 100 px at 256²):
 
 | Split | Larvae | Separation F1 |
 |---|---|---|
-| valid | 720 | 0.972 |
-| test | 764 | 0.938 |
-| test_real | 336 | 0.882 (broken SAM 3 masks) |
+| valid | 2,869 | 0.974 |
+| test | 2,902 | 0.973 |
+| test_real | 518 | 0.976 |
+
+(Measured on the cleaned data, all images, ignore regions excluded. On the v1 data the ceilings were 0.968 / 0.936 / 0.925.)
 
 A trained model cannot beat these numbers with the current post-processing.
 
@@ -35,6 +37,9 @@ Needs the `mamba_ssm` CUDA kernel (installed in `.venv`, torch 2.4.1 + cu124). B
 | Date | Run | Notes | valid e2e_f1 | test | test_real |
 |---|---|---|---|---|---|
 | 2026-10-03 | smoke_test | pipeline check only (5 batches) | – | – | – |
+| 2026-10-03 | 2026-10-03_23-12-56 | data `sam3_aug20k_v1`, 40 ep, best ep 31 | 0.872 | 0.847 | 0.899 |
+
+⚠️ The 2026-10-03 run used `sam3_aug20k_v1`: the Roboflow split leaked (~80% of valid/test images had a same-scene image in train), so its scores are **optimistic and not comparable** with runs on the cleaned `sam3_aug20k` (built 2026-10-06 from `sam3_seg_v2`).
 
 ## Open questions
 - Is `boundary_width = 1` enough to separate larvae lying side by side? Try 2 if merges dominate.
