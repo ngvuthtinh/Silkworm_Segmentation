@@ -85,6 +85,24 @@ def parse_args() -> argparse.Namespace:
         help="Confidence threshold for SAM 3 text grounding detections.",
     )
     group_prompt.add_argument(
+        "--extra-prompts",
+        nargs="*",
+        default=[],
+        help="Extra text prompts tried together with --prompt (e.g. 'silkworm larva' 'caterpillar').",
+    )
+    group_prompt.add_argument(
+        "--min-match-iou",
+        type=float,
+        default=0.15,
+        help="Minimum IoU between a text-prompt detection and a YOLO box to accept the detection's mask.",
+    )
+    group_prompt.add_argument(
+        "--no-box-fallback",
+        action="store_true",
+        help="Never fall back to the interactive box prompt. Use this with sam3.1_multiplex.pt, whose checkpoint "
+             "has NO weights for the interactive predictor (box prompts then return random masks).",
+    )
+    group_prompt.add_argument(
         "--box-margin",
         type=float,
         default=0.08,
@@ -562,6 +580,9 @@ def process_image(
     box_margin: float = 0.08,
     min_area: int = 50,
     simplify_epsilon: float = 0.0025,
+    extra_prompts: Optional[List[str]] = None,
+    min_match_iou: float = 0.15,
+    box_fallback: bool = True,
 ) -> int:
     """Process a single image with SAM3 guided by text prompt and YOLO bounding boxes."""
     import torch
@@ -579,15 +600,15 @@ def process_image(
         text_masks = []
         text_boxes = []
         text_scores = []
-        if prompt:
+        for p in [q for q in [prompt, *(extra_prompts or [])] if q]:
             try:
                 processor.confidence_threshold = conf_threshold
-                text_out = processor.set_text_prompt(prompt, inference_state)
+                text_out = processor.set_text_prompt(p, inference_state)
                 if "masks" in text_out and len(text_out["masks"]) > 0:
-                    text_masks = text_out["masks"].float().cpu().numpy()
-                    text_boxes = text_out["boxes"].float().cpu().numpy()
-                    text_scores = text_out["scores"].float().cpu().numpy()
-            except Exception as e:
+                    text_masks.extend(text_out["masks"].float().cpu().numpy())
+                    text_boxes.extend(text_out["boxes"].float().cpu().numpy())
+                    text_scores.extend(text_out["scores"].float().cpu().numpy())
+            except Exception:
                 # Text prompt error fallback
                 pass
 
@@ -614,10 +635,13 @@ def process_image(
                     best_iou = iou
                     best_idx = i
 
-            if best_idx >= 0 and best_iou >= 0.15:
+            if best_idx >= 0 and best_iou >= min_match_iou:
                 # High-confidence match from text grounding
                 matched_mask = (text_masks[best_idx] > 0.5).astype(np.uint8)
                 matched_score = float(text_scores[best_idx])
+            elif not box_fallback:
+                # Không khớp được phát hiện nào → bỏ khung này (không tạo mask rác)
+                continue
             else:
                 # Option B: Run SAM 3 interactive box prompt
                 try:
@@ -758,6 +782,9 @@ def process_dataset(args: argparse.Namespace):
             box_margin=args.box_margin,
             min_area=args.min_area,
             simplify_epsilon=args.simplify_epsilon,
+            extra_prompts=args.extra_prompts,
+            min_match_iou=args.min_match_iou,
+            box_fallback=not args.no_box_fallback,
         )
         print(f"\n[DONE] Successfully labeled: {img_p.name} ({n} silkworm masks generated).")
         print(f"[Output] Check results in: {output_root.resolve()}")
@@ -894,6 +921,9 @@ def _run_batch(
             box_margin=args.box_margin,
             min_area=args.min_area,
             simplify_epsilon=args.simplify_epsilon,
+            extra_prompts=args.extra_prompts,
+            min_match_iou=args.min_match_iou,
+            box_fallback=not args.no_box_fallback,
         )
 
         if n > 0:
