@@ -132,14 +132,14 @@ def train(args: argparse.Namespace) -> None:
         n_batches = min(SMOKE_TRAIN_BATCHES, len(dl_train)) if args.smoke_test else len(dl_train)
         sums = np.zeros(4)
         pbar = tqdm(enumerate(dl_train), total=n_batches, desc=f"Epoch {epoch:02d}/{cfg.epochs} [TRAIN]", ncols=130)
-        for i, (imgs, body, bnd, dis, _inst) in pbar:
+        for i, (imgs, body, bnd, dis, _inst, valid) in pbar:
             if i >= n_batches:
                 break
-            imgs, body, bnd, dis = (t.to(device, non_blocking=True) for t in (imgs, body, bnd, dis))
+            imgs, body, bnd, dis, valid = (t.to(device, non_blocking=True) for t in (imgs, body, bnd, dis, valid))
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, enabled=use_amp):
                 logits = model(imgs)
-            loss, l_body, l_bnd, l_dis = loss_fn(logits, body, bnd, dis)
+            loss, l_body, l_bnd, l_dis = loss_fn(logits, body, bnd, dis, valid)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

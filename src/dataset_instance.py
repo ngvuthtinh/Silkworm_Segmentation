@@ -2,17 +2,20 @@
 """
 src/dataset_instance.py — Dataset cho bài toán phân đoạn TỪNG CON + chẩn đoán TỪNG CON.
 
-Mỗi mẫu trả về (image, body, boundary, disease, inst):
+Mỗi mẫu trả về (image, body, boundary, disease, inst, valid):
   - image    [3, H, W] float32  — ảnh RGB chuẩn hóa ImageNet
   - body     [1, H, W] float32  — 1 = pixel thuộc thân tằm
   - boundary [1, H, W] float32  — 1 = pixel nằm trên viền của một con (giữa 2 con, hoặc giữa con và nền)
   - disease  [1, H, W] float32  — 1 = pixel thuộc con bị Grasserie (chỉ có nghĩa trong vùng body)
   - inst     [H, W]    int64    — id từng con (0 = nền), dùng để đánh giá theo từng con
+  - valid    [1, H, W] float32  — 1 = pixel được tính loss/điểm, 0 = "vùng bỏ qua" (con tằm có trong ảnh
+                                    nhưng không có nhãn, hoặc mảnh vụn quá nhỏ). Không có file → tính tất cả.
 
 Cấu trúc thư mục mong đợi (sinh bởi utils/augment_mixed_10k.py):
     data_root/<split>/images/*.jpg
     data_root/<split>/masks_inst/*.png   (uint16, id từng con)
     data_root/<split>/masks_cls/*.png    (uint8: 0 = nền, 1 = Grasserie, 2 = Healthy)
+    data_root/<split>/masks_ignore/*.png (uint8: 255 = vùng bỏ qua; tuỳ chọn)
 """
 
 from __future__ import annotations
@@ -74,30 +77,36 @@ class InstanceSilkwormDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         img_p, inst_p, cls_p = self.samples[idx]
         img = cv2.cvtColor(cv2.imread(str(img_p)), cv2.COLOR_BGR2RGB)
         inst = cv2.imread(str(inst_p), cv2.IMREAD_UNCHANGED).astype(np.int32)
         cls = cv2.imread(str(cls_p), cv2.IMREAD_GRAYSCALE)
+        ign_p = self.root / "masks_ignore" / f"{img_p.stem}.png"
+        ign = cv2.imread(str(ign_p), cv2.IMREAD_GRAYSCALE) if ign_p.exists() else np.zeros(cls.shape, np.uint8)
 
         s = self.img_size
         img = cv2.resize(img, (s, s), interpolation=cv2.INTER_LINEAR)
         inst = cv2.resize(inst.astype(np.float32), (s, s), interpolation=cv2.INTER_NEAREST).astype(np.int32)
         cls = cv2.resize(cls, (s, s), interpolation=cv2.INTER_NEAREST)
+        ign = cv2.resize(ign, (s, s), interpolation=cv2.INTER_NEAREST)
 
         if self.augment:
             if random.random() < 0.5:
-                img, inst, cls = img[:, ::-1], inst[:, ::-1], cls[:, ::-1]
+                img, inst, cls, ign = img[:, ::-1], inst[:, ::-1], cls[:, ::-1], ign[:, ::-1]
             if random.random() < 0.5:
-                img, inst, cls = img[::-1], inst[::-1], cls[::-1]
+                img, inst, cls, ign = img[::-1], inst[::-1], cls[::-1], ign[::-1]
             k = random.randint(0, 3)
             if k:
-                img, inst, cls = np.rot90(img, k), np.rot90(inst, k), np.rot90(cls, k)
-            img, inst, cls = img.copy(), inst.copy(), cls.copy()
+                img, inst, cls, ign = np.rot90(img, k), np.rot90(inst, k), np.rot90(cls, k), np.rot90(ign, k)
+            img, inst, cls, ign = img.copy(), inst.copy(), cls.copy(), ign.copy()
 
         body = (inst > 0).astype(np.float32)
         boundary = instance_boundary(inst, self.boundary_width)
         disease = (cls == CLS_GRASSERIE).astype(np.float32)
+        valid = ((ign <= 127) | (inst > 0)).astype(np.float32)   # con có nhãn luôn được tính
 
         img_t = torch.from_numpy(_normalize(img / 255.0).transpose(2, 0, 1).copy())
         return (
@@ -106,4 +115,5 @@ class InstanceSilkwormDataset(Dataset):
             torch.from_numpy(boundary)[None],
             torch.from_numpy(disease)[None],
             torch.from_numpy(inst.astype(np.int64)),
+            torch.from_numpy(valid)[None],
         )

@@ -107,11 +107,11 @@ def analyse(prob: np.ndarray, cfg: MultiTaskConfig) -> tuple[np.ndarray, dict[in
     return split_instances(prob[BODY], prob[BOUNDARY], prob[DISEASE], cfg.body_thr, cfg.boundary_thr, cfg.disease_thr)
 
 
-def render_labeled(rgb, prob, gt_inst, gt_dis, cfg) -> tuple[np.ndarray, dict[str, int]]:
+def render_labeled(rgb, prob, gt_inst, gt_dis, cfg, ignore=None) -> tuple[np.ndarray, dict[str, int]]:
     pred_inst, info = analyse(prob, cfg)
     pred_cls = {k: v[0] for k, v in info.items()}
     gt_cls = gt_instance_classes(gt_inst, gt_dis)
-    cnt = match_instances(pred_inst, pred_cls, gt_inst, gt_cls, cfg.iou_thr, cfg.min_area)
+    cnt = match_instances(pred_inst, pred_cls, gt_inst, gt_cls, cfg.iou_thr, cfg.min_area, ignore)
     n_gt = cnt["tp"] + cnt["fn"]
     n_pred = cnt["tp"] + cnt["fp"]
     panels = [
@@ -175,10 +175,10 @@ def main() -> None:
 
     total: dict[str, int] = {}
     for k, idx in enumerate(chosen):
-        _, _, _, dis, inst = ds[idx]
+        _, _, _, dis, inst, valid = ds[idx]
         stem = ds.samples[idx][0].stem
         rgb = cv2.cvtColor(cv2.imread(str(ds.samples[idx][0])), cv2.COLOR_BGR2RGB)
-        vis, cnt = render_labeled(rgb, predict(model, rgb, cfg, device), inst.numpy(), dis[0].numpy(), cfg)
+        vis, cnt = render_labeled(rgb, predict(model, rgb, cfg, device), inst.numpy(), dis[0].numpy(), cfg, valid[0].numpy() < 0.5)
         for key, v in cnt.items():
             total[key] = total.get(key, 0) + v
         cv2.imwrite(str(out_dir / f"{k + 1:02d}_{stem}.png"), cv2.cvtColor(vis, cv2.COLOR_RGB2BGR))

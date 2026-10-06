@@ -36,15 +36,16 @@ def run_eval(
     model.eval()
     counts: collections.Counter = collections.Counter()
     inter = denom = 0.0
-    for b, (imgs, body, _bnd, disease, inst) in enumerate(tqdm(loader, desc="  → [VAL]  ", ncols=130, leave=False)):
+    for b, (imgs, body, _bnd, disease, inst, valid) in enumerate(tqdm(loader, desc="  → [VAL]  ", ncols=130, leave=False)):
         if max_batches is not None and b >= max_batches:
             break
         with torch.autocast(device_type=device.type, enabled=cfg.amp and device.type == "cuda"):
             prob = torch.sigmoid(model(imgs.to(device)).float()).cpu().numpy()
         pb = prob[:, BODY] >= cfg.body_thr
         gb = body[:, 0].numpy() > 0.5
-        inter += (pb & gb).sum()
-        denom += pb.sum() + gb.sum()
+        vm = valid[:, 0].numpy() > 0.5                      # Dice thân tằm chỉ tính ngoài vùng bỏ qua
+        inter += (pb & gb & vm).sum()
+        denom += (pb & vm).sum() + (gb & vm).sum()
         for i in range(prob.shape[0]):
             pred_inst, info = split_instances(
                 prob[i, BODY], prob[i, BOUNDARY], prob[i, DISEASE],
@@ -53,7 +54,7 @@ def run_eval(
             gi, gd = inst[i].numpy(), disease[i, 0].numpy()
             counts.update(match_instances(
                 pred_inst, {k: v[0] for k, v in info.items()}, gi, gt_instance_classes(gi, gd),
-                cfg.iou_thr, cfg.min_area,
+                cfg.iou_thr, cfg.min_area, ~vm[i],
             ))
     out = summarize_instance_counts(counts)
     out["body_dice"] = float(2 * inter / max(denom, 1))

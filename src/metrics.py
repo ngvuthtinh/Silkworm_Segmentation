@@ -174,10 +174,13 @@ def match_instances(
     gt_cls: dict[int, int],
     iou_thr: float = 0.5,
     min_area: int = 100,
+    ignore: np.ndarray | None = None,
 ) -> dict[str, int]:
     """
     Ghép con dự đoán với con thật theo IoU (tham lam, IoU cao trước, mỗi con ghép tối đa 1 lần).
     Đối tượng nhỏ hơn `min_area` pixel (mảnh nhiễu, mẩu bị lá che gần hết) bị bỏ qua ở CẢ hai phía.
+    `ignore` (bool [H, W], tuỳ chọn): con dự đoán có ≥ 50% pixel nằm trong vùng bỏ qua (con tằm thật nhưng
+    không có nhãn) không bị tính là dự đoán sai.
 
     Trả về số đếm:
       tp / fp / fn          — tách con đúng (IoU ≥ iou_thr), bất kể bệnh
@@ -187,6 +190,8 @@ def match_instances(
     """
     gt_cls = {g: c for g, c in gt_cls.items() if (gt_inst == g).sum() >= min_area}
     pred_cls = {q: c for q, c in pred_cls.items() if (pred_inst == q).sum() >= min_area}
+    if ignore is not None and ignore.any():
+        pred_cls = {q: c for q, c in pred_cls.items() if ignore[pred_inst == q].mean() < 0.5}
 
     pairs = []
     for g in gt_cls:
