@@ -129,6 +129,12 @@ class SilkwormObjectBank:
         return random.choice(pool)
 
 
+# Tham số cảnh (chỉnh qua dòng lệnh trong main)
+PASTE_SCALE = (0.85, 1.15)
+PASTE_COUNTS = (1, 2)
+MIN_INST_AREA = 80
+
+
 # =====================================================================
 # 2. GIẢ LẬP LÁ DÂU CHE (LEAF OCCLUSION — NHÓM 4)
 # =====================================================================
@@ -221,7 +227,7 @@ def paste_silkworm_with_overlap(
     crop_img = cutout.image_crop
     crop_mask = cutout.mask_crop
 
-    scale = random.uniform(0.85, 1.15)
+    scale = random.uniform(PASTE_SCALE[0], PASTE_SCALE[1])
     rot_angle = random.uniform(0, 360)
     flip_lr = random.choice([True, False])
 
@@ -341,7 +347,7 @@ def get_base_spatial_photometric_augmenter() -> A.Compose:
             A.VerticalFlip(p=0.5),
             A.RandomRotate90(p=0.5),
             A.Affine(
-                scale=(0.92, 1.08),
+                scale=(0.8, 1.08),
                 translate_percent=(-0.04, 0.04),
                 rotate=(-35, 35),
                 interpolation=cv2.INTER_LINEAR,
@@ -365,7 +371,7 @@ def get_base_spatial_photometric_augmenter() -> A.Compose:
                 ],
                 p=0.25,
             ),
-            A.GaussNoise(p=0.2),
+            A.GaussNoise(std_range=(0.02, 0.06), p=0.2),   # mặc định (0.2, 0.44) quá mạnh, làm tằm khó thấy
         ],
         is_check_shapes=False,
     )
@@ -393,18 +399,23 @@ def generate_single_sample(
     mask = cv2.imread(str(mask_p), cv2.IMREAD_GRAYSCALE)
     if img is None or mask is None:
         return False
+    # Vùng bỏ qua (con tằm có trong ảnh nhưng không có nhãn) — nằm cạnh thư mục masks/
+    ign_p = mask_p.parent.parent / "masks_ignore" / mask_p.name
+    ign = cv2.imread(str(ign_p), cv2.IMREAD_GRAYSCALE) if ign_p.exists() else np.zeros(mask.shape, np.uint8)
 
     if img.shape[:2] != (640, 640):
         img = cv2.resize(img, (640, 640), interpolation=cv2.INTER_LINEAR)
         mask = cv2.resize(mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+        ign = cv2.resize(ign, (640, 640), interpolation=cv2.INTER_NEAREST)
 
     _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
 
-    # 1. Biến đổi Hình học & Quang học cơ bản
-    augmented = augmenter(image=img, mask=mask)
+    # 1. Biến đổi Hình học & Quang học cơ bản (mask và vùng bỏ qua biến đổi cùng ảnh)
+    augmented = augmenter(image=img, masks=[mask, ign])
     cur_img = augmented["image"]
-    cur_mask = augmented["mask"]
+    cur_mask, cur_ign = augmented["masks"]
     _, cur_mask = cv2.threshold(cur_mask, 127, 255, cv2.THRESH_BINARY)
+    _, cur_ign = cv2.threshold(cur_ign, 127, 255, cv2.THRESH_BINARY)
 
     instances = [(cur_mask.copy(), base_class_id)] if cv2.countNonZero(cur_mask) > 100 else []
 
@@ -413,7 +424,7 @@ def generate_single_sample(
 
     # [NHÓM 5]: Tằm đè lên nhau (Copy-Paste)
     if mode_rand < 0.50 and bank.objects:
-        num_pastes = random.choice([1, 2])
+        num_pastes = random.choice(PASTE_COUNTS)
         for _ in range(num_pastes):
             sample_cutout = bank.sample(base_class_id if same_class_paste else None)
             if sample_cutout:
@@ -431,6 +442,7 @@ def generate_single_sample(
 
             leaf_mask_bool = leaf_alpha > 127
             cur_img[leaf_mask_bool] = leaf_bgr[leaf_mask_bool]
+            cur_ign[leaf_mask_bool] = 0                      # lá che lên → pixel đó giờ là lá, không còn mơ hồ
 
             inv_leaf = cv2.bitwise_not(leaf_alpha)
             cur_mask = cv2.bitwise_and(cur_mask, inv_leaf)
@@ -446,15 +458,18 @@ def generate_single_sample(
         return False
 
     # Bản đồ từng con (instance id) và bản đồ lớp (0 = nền, 1 = Grasserie, 2 = Healthy).
-    # Mỗi thành phần liền kề của một instance là một con riêng.
+    # Mỗi thành phần liền kề của một instance là một con riêng; mảnh quá nhỏ → vùng bỏ qua.
     inst_map = np.zeros(cur_mask.shape, dtype=np.uint16)
     cls_map = np.zeros(cur_mask.shape, dtype=np.uint8)
     next_id = 1
     for inst_m, cls_id in instances:
+        cur_ign[inst_m > 127] = 0                            # tằm có nhãn (kể cả tằm dán đè) không bị bỏ qua
+    for inst_m, cls_id in instances:
         n_cc, cc = cv2.connectedComponents((inst_m > 127).astype(np.uint8))
         for k in range(1, n_cc):
             region = cc == k
-            if region.sum() < 80:
+            if region.sum() < MIN_INST_AREA:
+                cur_ign[region] = 255
                 continue
             inst_map[region] = next_id
             cls_map[region] = cls_id + 1
@@ -462,6 +477,7 @@ def generate_single_sample(
     if next_id == 1:
         return False
     cur_mask = np.where(inst_map > 0, 255, 0).astype(np.uint8)
+    cur_ign[inst_map > 0] = 0
 
     out_stem = f"{name_prefix}_{sample_idx:06d}"
     out_img_path = target_img_dir / f"{out_stem}.jpg"
@@ -472,13 +488,16 @@ def generate_single_sample(
     cv2.imwrite(str(out_mask_path), cur_mask)
     cv2.imwrite(str(target_mask_dir.parent / "masks_inst" / f"{out_stem}.png"), inst_map)
     cv2.imwrite(str(target_mask_dir.parent / "masks_cls" / f"{out_stem}.png"), cls_map)
+    cv2.imwrite(str(target_mask_dir.parent / "masks_ignore" / f"{out_stem}.png"), cur_ign)
 
-    yolo_lines = instances_to_yolo_polygons(instances)
+    yolo_lines = instances_to_yolo_polygons(instances, min_area=float(MIN_INST_AREA))
     with open(out_lbl_path, "w", encoding="utf-8") as f:
         f.write("\n".join(yolo_lines) + "\n")
 
     if preview_dir and sample_idx < 50:
         overlay = cur_img.copy()
+        g = cur_ign > 127
+        overlay[g] = (overlay[g] * 0.4 + np.array([160, 160, 160]) * 0.6).astype(np.uint8)   # xám = vùng bỏ qua
         for inst_m, cls_id in instances:
             color = [0, 69, 255] if cls_id == 0 else [0, 255, 128]
             m_bool = inst_m > 127
@@ -494,7 +513,9 @@ def generate_single_sample(
 # 6. THU THẬP NGUỒN DỮ LIỆU VÀ CHẠY TOÀN BỘ QUY TRÌNH
 # =====================================================================
 
-def collect_all_source_samples(include_silkynet: bool = True, split: str = "train") -> List[Tuple[Path, Path, int]]:
+def collect_all_source_samples(
+    include_silkynet: bool = True, split: str = "train", source_root: Optional[Path] = None
+) -> List[Tuple[Path, Path, int]]:
     """
     Thu thập dữ liệu nguồn:
       1. sam3_seg (kèm ảnh từ yolo_bbox)
@@ -505,6 +526,9 @@ def collect_all_source_samples(include_silkynet: bool = True, split: str = "trai
     # 1. Nguồn SAM3
     sam3_mask_dir = Path(f"data/sam3_seg/{split}/masks")
     yolo_img_dir = Path(f"data/yolo_bbox/{split}/images")
+    if source_root is not None:                       # bộ nguồn đã làm sạch: images/ masks/ masks_ignore/ cùng chỗ
+        sam3_mask_dir = source_root / split / "masks"
+        yolo_img_dir = source_root / split / "images"
 
     if sam3_mask_dir.exists() and yolo_img_dir.exists():
         for m_p in sam3_mask_dir.glob("*.png"):
@@ -590,12 +614,20 @@ def main():
     parser.add_argument("--same-class-paste", action="store_true",
                         help="Chỉ dán tằm cùng lớp với ảnh nền (mỗi ảnh có đúng 1 nhãn bệnh)")
     parser.add_argument("--name-prefix", type=str, default="silkworm_aug10k", help="Tiền tố tên file đầu ra")
+    parser.add_argument("--source-root", type=Path, default=None,
+                        help="Bộ nguồn đã làm sạch (vd data/sam3_seg_v2) chứa <split>/images, masks, masks_ignore")
+    parser.add_argument("--paste-scale", type=float, nargs=2, default=[0.85, 1.15], help="Tỉ lệ thu phóng tằm dán")
+    parser.add_argument("--paste-counts", type=int, nargs="+", default=[1, 2], help="Số tằm dán thêm (chọn ngẫu nhiên)")
+    parser.add_argument("--min-inst-area", type=int, default=80,
+                        help="Mảnh nhỏ hơn (px, ảnh 640) không tính là một con mà thành vùng bỏ qua")
     parser.add_argument("--split", choices=["train", "valid", "test"], default="train",
                         help="Split nguồn SAM3 dùng cho ảnh nền và Object Bank (tránh rò rỉ giữa các split)")
     args = parser.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
+    global PASTE_SCALE, PASTE_COUNTS, MIN_INST_AREA
+    PASTE_SCALE, PASTE_COUNTS, MIN_INST_AREA = tuple(args.paste_scale), tuple(args.paste_counts), args.min_inst_area
 
     target_img_dir = args.output_dir / "images"
     target_mask_dir = args.output_dir / "masks"
@@ -603,19 +635,23 @@ def main():
     preview_dir = (args.output_dir / "aug_previews") if args.preview else None
 
     for d in [target_img_dir, target_mask_dir, target_lbl_dir,
-              args.output_dir / "masks_inst", args.output_dir / "masks_cls"]:
+              args.output_dir / "masks_inst", args.output_dir / "masks_cls", args.output_dir / "masks_ignore"]:
         d.mkdir(parents=True, exist_ok=True)
     if preview_dir:
         preview_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Thu thập toàn bộ dữ liệu nguồn
-    source_samples = collect_all_source_samples(include_silkynet=not args.sam3_only, split=args.split)
+    source_samples = collect_all_source_samples(include_silkynet=not args.sam3_only, split=args.split,
+                                                source_root=args.source_root)
     if not source_samples:
         raise RuntimeError("Không tìm thấy dữ liệu nguồn từ SAM3 hoặc Silkynet!")
 
     # 2. Xây dựng Object Bank
     sam3_mask_dir = Path(f"data/sam3_seg/{args.split}/masks")
     yolo_img_dir = Path(f"data/yolo_bbox/{args.split}/images")
+    if args.source_root is not None:
+        sam3_mask_dir = args.source_root / args.split / "masks"
+        yolo_img_dir = args.source_root / args.split / "images"
     bank =SilkwormObjectBank(sam3_mask_dir, yolo_img_dir, max_objects=1200, seed=args.seed)
 
     total_target = args.dry_run if args.dry_run is not None else args.goal
