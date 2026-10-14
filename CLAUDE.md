@@ -67,7 +67,7 @@ source .venv/bin/activate   # Python 3.12, torch 2.4.1 + CUDA 12.4, mamba_ssm 2.
 ### 3.2. Data
 ```bash
 # SAM 3 pseudo-masks from YOLO boxes
-python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir data/sam3_seg --prompt silkworm --device cuda
+python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir <out> --prompt silkworm --no-box-fallback --device cuda
 
 # Augmented per-larva dataset (one call per split; sources never cross splits)
 python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000 --workers 24 --seed 42
@@ -112,11 +112,9 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 
 See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - `data/yolo_bbox` — raw images + boxes + disease class.
-- `data/sam3_seg` — SAM 3 masks.
 - `data/sam3_seg_v2` — **clean source**: scene-based split (old Roboflow split leaked ~80% of valid/test), repaired SAM 3 masks, `masks_ignore/` for unlabelled larvae. Built by `utils/build_sam3_seg_v2/`.
 - `data/sam3_aug20k` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`) built from `sam3_seg_v2`; `train` 20,000 / `valid` 1,000 / `test` 1,000 (synthetic) and `test_real` 499 (real photos).
-- `data/sam3_aug20k_v1` — previous set (leaky split, broken masks); only for comparing with the first trained model.
-- `data/mixed_10k` — legacy image-level set (known issues, see DATASET_STRUCTURE.md).
+- Deleted on 2026-10-12: `sam3_seg` (v1 masks), `sam3_aug20k_v1` (leaky), `mixed_10k` (image-level, Silkynet). Their checkpoints stay in `runs/`, but `multitask_vmunet_v1` and `multitask_swinunet` can no longer be retrained.
 
 Rules: split by **scene**, never by image (near-identical shots of one larva stay together); raw data is read-only; paths in code are relative to the project root; `images/<stem>` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.
 

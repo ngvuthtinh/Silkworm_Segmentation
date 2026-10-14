@@ -11,16 +11,15 @@ Folder names are short and lowercase. The suffix tells you the content: `_bbox` 
 ```text
 data/
 ├── yolo_bbox/        # Raw data: images + YOLO boxes + disease class (Roboflow export, original split)
-├── sam3_seg/         # SAM 3 pseudo-masks v1 (contain broken masks, see 2.2)
 ├── sam3_seg_v2/      # ⭐ Clean source: scene-based split, repaired masks, ignore regions
 ├── sam3_aug20k/      # ⭐ Per-larva training set built from sam3_seg_v2 (train / valid / test / test_real)
-├── sam3_aug20k_v1/   # Previous per-larva set (built from sam3_seg + the Roboflow split; leaky, kept for comparison)
-├── mixed_10k/        # Legacy image-level set (SAM3 + Silkynet)
 ├── silkynet_seg/     # Silkynet images (no disease label), no longer used
 └── test/             # 2 unseen real photos for qualitative checks
 ```
 
-Lineage: `yolo_bbox` → SAM 3 → `sam3_seg` → (repair, scene split, ignore regions) → `sam3_seg_v2` → augment → `sam3_aug20k`
+Lineage: `yolo_bbox` → SAM 3 (+ repair, scene split, ignore regions) → `sam3_seg_v2` → augment → `sam3_aug20k`
+
+> 🗑️ Deleted on 2026-10-12 and no longer in `data/`: `sam3_seg` (v1 masks), `sam3_aug20k_v1` (leaky split), `mixed_10k` (image-level + Silkynet). Sections 2.2 and 2.5 below describe them for history only.
 
 ---
 
@@ -135,7 +134,7 @@ Main flags of `augment_mixed_10k.py`: `--source-root`, `--split`, `--goal`, `--p
 
 ## 🛡️ 5. Integrity Rules
 
-1. **Raw data is read-only.** Never edit `yolo_bbox/` or `sam3_seg/` by hand. Build new versions (`*_v2`) instead.
+1. **Raw data is read-only.** Never edit `yolo_bbox/` or `sam3_seg_v2/` by hand. Build new versions (`*_v2`) instead.
 2. **Split by scene, never by image.** Near-identical shots of one larva must stay in the same split.
 3. **Never commit data.** `data/` and `runs/` are excluded by `.gitignore`. Small manifests live in `utils/build_sam3_seg_v2/`.
 4. **Strict filename matching.** `images/<stem>.jpg` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.

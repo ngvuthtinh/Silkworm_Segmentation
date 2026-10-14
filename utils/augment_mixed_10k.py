@@ -417,7 +417,14 @@ def generate_single_sample(
     _, cur_mask = cv2.threshold(cur_mask, 127, 255, cv2.THRESH_BINARY)
     _, cur_ign = cv2.threshold(cur_ign, 127, 255, cv2.THRESH_BINARY)
 
-    instances = [(cur_mask.copy(), base_class_id)] if cv2.countNonZero(cur_mask) > 100 else []
+    # Đánh số từng con NGAY TỪ ĐẦU (mỗi mảng liền của ảnh nền là một con). Sau khi bị dán đè hay lá che,
+    # một con có thể vỡ thành nhiều mảnh nhưng vẫn giữ đúng một số hiệu.
+    instances = []
+    n_cc, cc = cv2.connectedComponents((cur_mask > 127).astype(np.uint8))
+    for k in range(1, n_cc):
+        comp = np.where(cc == k, 255, 0).astype(np.uint8)
+        if cv2.countNonZero(comp) > 100:
+            instances.append((comp, base_class_id))
 
     # 2. Quyết định chế độ tăng cường nâng cao:
     mode_rand = random.random()
@@ -458,7 +465,8 @@ def generate_single_sample(
         return False
 
     # Bản đồ từng con (instance id) và bản đồ lớp (0 = nền, 1 = Grasserie, 2 = Healthy).
-    # Mỗi thành phần liền kề của một instance là một con riêng; mảnh quá nhỏ → vùng bỏ qua.
+    # Một con = một số hiệu, kể cả khi bị che thành nhiều mảnh. Mảnh vụn < 80 px và con có tổng diện tích
+    # < MIN_INST_AREA (gần như bị che hết) → vùng bỏ qua.
     inst_map = np.zeros(cur_mask.shape, dtype=np.uint16)
     cls_map = np.zeros(cur_mask.shape, dtype=np.uint8)
     next_id = 1
@@ -466,14 +474,19 @@ def generate_single_sample(
         cur_ign[inst_m > 127] = 0                            # tằm có nhãn (kể cả tằm dán đè) không bị bỏ qua
     for inst_m, cls_id in instances:
         n_cc, cc = cv2.connectedComponents((inst_m > 127).astype(np.uint8))
+        keep = np.zeros(inst_m.shape, bool)
         for k in range(1, n_cc):
             region = cc == k
-            if region.sum() < MIN_INST_AREA:
+            if region.sum() < 80:
                 cur_ign[region] = 255
-                continue
-            inst_map[region] = next_id
-            cls_map[region] = cls_id + 1
-            next_id += 1
+            else:
+                keep |= region
+        if keep.sum() < MIN_INST_AREA:
+            cur_ign[keep] = 255
+            continue
+        inst_map[keep] = next_id
+        cls_map[keep] = cls_id + 1
+        next_id += 1
     if next_id == 1:
         return False
     cur_mask = np.where(inst_map > 0, 255, 0).astype(np.uint8)

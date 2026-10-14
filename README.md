@@ -39,7 +39,7 @@ Silkworm_Segmentation/
 ├── runs/                    # [TIER 4] Checkpoints & logs (auto-generated, not committed)
 ├── data/                    # Datasets (not committed) — see DATASET_STRUCTURE.md
 │   ├── yolo_bbox/           #   Raw images + YOLO boxes + disease class
-│   ├── sam3_seg/            #   SAM 3 pseudo-masks
+│   ├── sam3_seg_v2/         #   Clean source: repaired SAM 3 masks, scene-based split, ignore regions
 │   ├── sam3_aug20k/         #   ⭐ Per-larva training set (train / valid / test / test_real)
 │   └── mixed_10k/           #   Legacy image-level set
 └── utils/
@@ -66,7 +66,7 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Pseudo-masks with SAM 3
-python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir data/sam3_seg --prompt silkworm --device cuda
+python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir <out> --prompt silkworm --no-box-fallback --device cuda
 
 # 2. Build the per-larva dataset (repeat with --split valid/test and a smaller --goal)
 python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000
