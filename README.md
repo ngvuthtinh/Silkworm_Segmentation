@@ -36,15 +36,19 @@ Silkworm_Segmentation/
 │   ├── multitask_vmunet_v1/    #   Legacy: binary mask + one label per image
 │   ├── multitask_swinunet/  #   Legacy
 │   └── segfirst_*/          #   Legacy staged baselines
-├── runs/                    # [TIER 4] Checkpoints & logs (auto-generated, not committed)
+├── runs/                    # [TIER 4] Default output of old runs (auto-generated, not committed)
+├── Reports/                 # One folder per meeting: checkpoints/ (runs) + results/ (scores, images, summaries)
 ├── data/                    # Datasets (not committed) — see DATASET_STRUCTURE.md
 │   ├── yolo_bbox/           #   Raw images + YOLO boxes + disease class
-│   ├── sam3_seg_v2/         #   Clean source: repaired SAM 3 masks, scene-based split, ignore regions
-│   ├── sam3_aug20k/         #   ⭐ Per-larva training set (train / valid / test / test_real)
-│   └── mixed_10k/           #   Legacy image-level set
+│   ├── sam3_aug20k_v3/      #   ⭐ Per-larva dataset (train / valid / test / valid_real / test_real)
+│   ├── test/                #   2 dense real photos for qualitative checks
+│   └── legacy/              #   Older data (sam3_seg_v2/v3, sam3_scan, sam3_aug20k, mixed_10k, silkynet_seg, ...)
 └── utils/
     ├── sam3_label_from_yolo.py  # SAM 3 masks from YOLO boxes
-    └── augment_mixed_10k.py     # Scene composition / augmentation
+    ├── sam3_scan_dets.py        # Thorough SAM 3 rescan of the real images
+    ├── sam3_recheck.py          # Review images: SAM 3 vs labels
+    ├── augment_mixed_10k.py     # Scene composition / augmentation
+    └── build_sam3_seg_v2/       # Clean source, mask fix (fix_seg_v3.py), dataset build (build_aug20k_v3.sh)
 ```
 
 ---
@@ -68,18 +72,19 @@ pip install -r requirements.txt
 # 1. Pseudo-masks with SAM 3
 python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir <out> --prompt silkworm --no-box-fallback --device cuda
 
-# 2. Build the per-larva dataset (repeat with --split valid/test and a smaller --goal)
-python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000
+# 2. Build the per-larva dataset: fix the masks with the SAM 3 rescan, then compose scenes (see DATASET_STRUCTURE.md §4)
+python utils/build_sam3_seg_v2/fix_seg_v3.py train valid test
+bash utils/build_sam3_seg_v2/build_aug20k_v3.sh
 
-# 3. Train (always from the project root, as a module)
+# 3. Train (always from the project root, as a module; default data is data/sam3_aug20k_v3)
 python -m experiments.multitask_vmunet.train --smoke-test --gpu 1
-python -m experiments.multitask_vmunet.train --gpu 1
+python -m experiments.multitask_vmunet.train --gpu 1 --out-dir Reports/Meeting_<date>/checkpoints/multitask_vmunet
 
 # 4. Evaluate per larva
-python -m experiments.multitask_vmunet.evaluate --checkpoint runs/multitask_vmunet/<run>/checkpoints/best.pth --split test_real
+python -m experiments.multitask_vmunet.evaluate --checkpoint Reports/Meeting_<date>/checkpoints/multitask_vmunet/<run>/checkpoints/best.pth --split test_real
 ```
 
-Outputs go to `runs/multitask_vmunet/<timestamp>/` (`checkpoints/`, `logs/train_log.csv`, `config.yaml`).
+Each run folder is `<run>/{checkpoints/, logs/train_log.csv, config.yaml}`. Put its results in `Reports/Meeting_<date>/results/<run>/eval_data_<data>/` so every score can be traced to a run and to the data it was measured on.
 
 ---
 

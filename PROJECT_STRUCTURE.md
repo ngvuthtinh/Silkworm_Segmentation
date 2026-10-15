@@ -11,7 +11,8 @@ Silkworm_Segmentation/
 ├── models/          ← [TIER 1] Upstream model code (do not edit)
 ├── src/             ← [TIER 2] Shared modules (datasets, losses, metrics)
 ├── experiments/     ← [TIER 3] One folder per experiment
-├── runs/            ← [TIER 4] Auto-generated checkpoints & logs
+├── runs/            ← [TIER 4] Default output folder of old runs
+├── Reports/         ← [TIER 4] One folder per meeting: checkpoints/ (runs) + results/ (scores, images, summaries)
 ├── data/            ← Datasets (see DATASET_STRUCTURE.md)
 └── utils/           ← Data generation scripts
 ```
@@ -26,7 +27,7 @@ Silkworm_Segmentation/
 models/
 ├── vmunet/      # VM-UNet / VMamba — only models/vmunet/models/vmunet/vmamba.py (VSSM) is used
 ├── swin_unet/   # Swin-UNet network + config + pretrained checkpoint (+ legacy Silkworm scripts)
-├── sam3/        # SAM 3, used by utils/sam3_label_from_yolo.py
+├── sam3/        # SAM 3, used by utils/sam3_label_from_yolo.py, sam3_scan_dets.py, sam3_recheck.py
 └── silkynet/    # Legacy, no longer used
 ```
 
@@ -87,15 +88,24 @@ One VSSM encoder–decoder outputs `[B, 3, H, W]` logits:
 
 ---
 
-## TIER 4 — `runs/`
+## TIER 4 — `Reports/` (and `runs/`)
+
+Checkpoints and results live together, one folder per meeting (the date of the meeting where the work is presented). The run folder name is the same in `checkpoints/` and in `results/`, so every score traces back to a run:
 
 ```text
-runs/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/
-├── config.yaml              # snapshot of MultiTaskConfig
-├── checkpoints/best.pth     # best validation e2e_f1
-├── checkpoints/last.pth
-└── logs/train_log.csv       # losses + body_dice, inst_f1, cls_acc_matched, e2e_f1, grasserie_recall
+Reports/Meeting_<date>/
+├── checkpoints/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/   # pass --out-dir to train.py
+│   ├── config.yaml              # snapshot of MultiTaskConfig (includes data_root)
+│   ├── checkpoints/best.pth     # best validation e2e_f1
+│   ├── checkpoints/last.pth
+│   └── logs/train_log.csv       # losses + body_dice, inst_f1, cls_acc_matched, e2e_f1, grasserie_recall
+└── results/
+    ├── README.md                # run → meaning → where its results are
+    ├── <same run name>/eval_data_<data>/   # scores + images of that run, on that data
+    └── sam3_check/ ...          # analyses not tied to one run
 ```
+
+Without `--out-dir`, `train.py` still writes to `runs/multitask_vmunet/<timestamp>/` (same inside layout). `runs/` also holds the older experiments (`segfirst_*`, `joint_*`, ...). `Reports/` is in `.gitignore`; keep scores in `results/` and in `experiments/<exp>/notes.md`.
 
 ---
 
@@ -108,8 +118,8 @@ runs/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/
 | How boundaries are built from instance maps | `src/dataset_instance.py` |
 | Loss | `src/losses.py` (`InstanceMultiTaskLoss`) |
 | Splitting larvae / per-larva metrics | `src/metrics.py` |
-| Generate or regenerate data | `utils/augment_mixed_10k.py` |
-| Inspect a run | `runs/<exp>/<timestamp>/` |
+| Generate or regenerate data | `utils/build_sam3_seg_v2/` (mask fix + dataset build), `utils/augment_mixed_10k.py` |
+| Inspect a run | `Reports/Meeting_<date>/checkpoints/<exp>/<timestamp>/` and `.../results/<timestamp>/` |
 
 ---
 
@@ -118,4 +128,4 @@ runs/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/
 - ❌ Never edit code inside `models/`.
 - ❌ Never duplicate shared logic (datasets, losses, metrics) inside experiments.
 - ❌ Never write checkpoints or generated images into `experiments/` or `src/`.
-- ❌ Never commit `runs/` or `data/` (enforced by `.gitignore`).
+- ❌ Never commit `runs/`, `data/` or `Reports/` (enforced by `.gitignore`).

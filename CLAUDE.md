@@ -49,7 +49,11 @@ Silkworm_Segmentation/
    except ImportError:
        from src.losses import CustomLoss
    ```
-4. **`runs/<exp>/<YYYY-MM-DD_HH-MM-SS>/`**: `checkpoints/{best,last}.pth`, `logs/train_log.csv`, `config.yaml`.
+4. **Runs and results** (one place per meeting, never scatter them):
+   - `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/`: `checkpoints/{best,last}.pth`, `logs/train_log.csv`, `config.yaml` (pass `--out-dir` to `train.py`; without it the run goes to `runs/multitask_vmunet/`).
+   - `Reports/Meeting_<date>/results/<same run name>/eval_data_<data>/`: evaluation scores and images of **that** run. `<data>` says which data it was scored on. Analyses not tied to one run (SAM 3 checks) go in `results/sam3_check/`. `results/README.md` maps run → meaning → where its results are.
+   - `<date>` is the date of the meeting where the work is presented (work done between two meetings goes into the later one).
+5. **Results table** (`Reports/ketqua_thi_nghiem.xlsx`, one file; tab "Kết quả" is the short view, tab "Chi tiết" has every metric for the thesis). **After every train + evaluation, update it**: save the scores as `eval_*.txt` in `results/<run>/eval_data_<x>/`, run `python utils/export_results_xlsx.py` (fills the numbers, keeps the hand-written cells), then fill the new row's three manual columns: `Mã` (B0, B1, E1, …), `Đổi gì` (the **one** thing changed since the previous experiment: loss *or* architecture, never both) and `Ghi chú` (one line). Never edit the old rows' numbers by hand.
 
 ---
 
@@ -69,17 +73,22 @@ source .venv/bin/activate   # Python 3.12, torch 2.4.1 + CUDA 12.4, mamba_ssm 2.
 # SAM 3 pseudo-masks from YOLO boxes
 python utils/sam3_label_from_yolo.py --input-yaml data/yolo_bbox/data.yaml --output-dir <out> --prompt silkworm --no-box-fallback --device cuda
 
-# Augmented per-larva dataset (one call per split; sources never cross splits)
-python utils/augment_mixed_10k.py --sam3-only --name-prefix aug --split train --output-dir data/sam3_aug20k/train --goal 20000 --workers 24 --seed 42
+# Augmented per-larva dataset (one call per split; sources never cross splits). Full pipeline for the current data:
+python utils/build_sam3_seg_v2/fix_seg_v3.py train valid test   # fix SAM 3 masks from the rescan → data/sam3_seg_v3
+bash utils/build_sam3_seg_v2/build_aug20k_v3.sh                 # → data/sam3_aug20k_v3
+# (the rescan itself, utils/sam3_scan_dets.py, and the paths of the legacy folders: see DATASET_STRUCTURE.md §4)
 ```
 
 ### 3.3. Train / evaluate (primary experiment)
 ```bash
 python -m experiments.multitask_vmunet.train --smoke-test --gpu 1     # 5 train + 3 val batches
-python -m experiments.multitask_vmunet.train --gpu 1 [--batch-size 4] [--epochs 40]
-python -m experiments.multitask_vmunet.evaluate --checkpoint runs/multitask_vmunet/<run>/checkpoints/best.pth --split test
-python -m experiments.multitask_vmunet.evaluate --checkpoint ... --split test_real
+python -m experiments.multitask_vmunet.train --gpu 1 --out-dir Reports/Meeting_<date>/checkpoints/multitask_vmunet [--batch-size 4] [--epochs 40] [--data-root <dir>]
+python -m experiments.multitask_vmunet.evaluate --checkpoint <run>/checkpoints/best.pth --split test
+python -m experiments.multitask_vmunet.evaluate --checkpoint ... --split test_real [--data-root <dir>]
 ```
+- The default `data_root` (config.py) is `data/sam3_aug20k_v3`. To score an old run on the data it was trained on, pass `--data-root data/legacy/sam3_aug20k`. **Always record which data a score was measured on.**
+- With `--resume` pass `--data-root` again; the run folder is the one given to `--resume`.
+- Run training in `tmux` (`tmux new -s <name>`, detach with Ctrl+b d); it survives closing the terminal but not a server reboot, then use `--resume`.
 
 ### 3.4. Metrics in `train_log.csv`
 | Column | Meaning |
@@ -91,6 +100,8 @@ python -m experiments.multitask_vmunet.evaluate --checkpoint ... --split test_re
 | `grasserie_recall` | fraction of diseased larvae found and flagged (missing a sick larva is the costly error) |
 
 Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM 3 noise, slivers hidden by leaves).
+
+⚠️ **Counting convention**: one larva = one id, even when a leaf hides it into several pieces. `split_instances` outputs one region per connected piece, so on composed images `inst_f1` is capped near **0.79** even for perfect maps (0.99 if each piece counted as a larva). Do not read the low precision on `valid`/`test` (≈0.66) as the model missing larvae: most of it is pieces of one larva counted as several. Details in `DATASET_STRUCTURE.md` §2.5.
 
 ---
 
@@ -112,9 +123,9 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 
 See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - `data/yolo_bbox` — raw images + boxes + disease class.
-- `data/sam3_seg_v2` — **clean source**: scene-based split (old Roboflow split leaked ~80% of valid/test), repaired SAM 3 masks, `masks_ignore/` for unlabelled larvae. Built by `utils/build_sam3_seg_v2/`.
-- `data/sam3_aug20k` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`) built from `sam3_seg_v2`; `train` 20,000 / `valid` 1,000 / `test` 1,000 (synthetic) and `test_real` 499 (real photos).
-- Deleted on 2026-10-12: `sam3_seg` (v1 masks), `sam3_aug20k_v1` (leaky), `mixed_10k` (image-level, Silkynet). Their checkpoints stay in `runs/`, but `multitask_vmunet_v1` and `multitask_swinunet` can no longer be retrained.
+- `data/sam3_aug20k_v3` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`); `train` 20,000 (6,872 real + 13,128 composed) / `valid` 1,000 / `test` 1,000 (composed) and `valid_real` 505 / `test_real` 499 (real photos). Built from `sam3_seg_v3`: scene-based split (old Roboflow split leaked ~80% of valid/test), SAM 3 masks fixed by a thorough rescan (bad masks removed, missing larvae added or put in `masks_ignore/`).
+- `data/legacy/` — everything older: `sam3_seg_v2` (source before the rescan), `sam3_seg_v3`, `sam3_scan` (raw rescan detections), `sam3_aug20k` (built from v2, masks not fixed; used by run `2026-10-14_00-01-58`), `sam3_aug20k_v1` (leaky), `sam3_seg`, `mixed_10k`, `silkynet_seg`. `sam3_seg`, `sam3_aug20k_v1` and `mixed_10k` are approximate rebuilds of folders deleted on 2026-10-12, so `multitask_vmunet_v1` and `multitask_swinunet` can only be retrained after pointing them to `data/legacy/...`.
+- Labels are SAM 3 pseudo-masks and class-from-filename; they have not been checked by an expert.
 
 Rules: split by **scene**, never by image (near-identical shots of one larva stay together); raw data is read-only; paths in code are relative to the project root; `images/<stem>` ↔ `masks*/<stem>.png` ↔ `labels/<stem>.txt`.
 
@@ -139,5 +150,7 @@ Rules: split by **scene**, never by image (near-identical shots of one larva sta
 | Dataset / boundary generation | [`src/dataset_instance.py`](src/dataset_instance.py) |
 | Loss | [`src/losses.py`](src/losses.py) → `InstanceMultiTaskLoss` |
 | Per-larva splitting & metrics | [`src/metrics.py`](src/metrics.py) |
-| Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py) |
-| Run outputs | `runs/multitask_vmunet/<timestamp>/` |
+| Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py), [`utils/build_sam3_seg_v2/`](utils/build_sam3_seg_v2/) |
+| Run outputs | `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<timestamp>/` |
+| Results of a run | `Reports/Meeting_<date>/results/<timestamp>/eval_data_<data>/` (see `results/README.md`) |
+| Current limitations of the baseline | `Reports/Meeting_2026-10-16/results/limitations_summary.md` |
