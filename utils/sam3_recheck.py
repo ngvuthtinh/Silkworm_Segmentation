@@ -26,50 +26,57 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "models" / "sam3"))
 
 PROMPTS = ["silkworm", "silkworm larva", "caterpillar", "worm", "larva"]
+SW = (0, 1)  # chỉ hai prompt chứa "silkworm" mới được tính là bằng chứng có tằm (prompt chung chung bắt cả phân, mảnh lá)
 RED, GREEN, GRAY = (255, 40, 40), (60, 200, 60), (150, 150, 150)
 
 
 def detect(processor, state, hw, thr):
     """Mọi prompt trên một ảnh → (masks bool [N,H,W], scores [N])."""
-    ms, ss = [], []
+    ms, ss, ps = [], [], []
     processor.confidence_threshold = thr
-    for p in PROMPTS:
+    for k, p in enumerate(PROMPTS):
         out = processor.set_text_prompt(p, state)
         if len(out["masks"]):
             ms.append(out["masks"].float().cpu().numpy()[:, 0] > 0.5)
             ss.append(out["scores"].float().cpu().numpy())
+            ps.append(np.full(len(ss[-1]), k))
     if not ms:
-        return np.zeros((0,) + hw, bool), np.zeros(0)
-    return np.concatenate(ms), np.concatenate(ss)
+        return np.zeros((0,) + hw, bool), np.zeros(0), np.zeros(0, int)
+    return np.concatenate(ms), np.concatenate(ss), np.concatenate(ps)
 
 
-def nms(masks, scores, iou_thr=0.5, contain_thr=0.8):
+def nms(masks, scores, prompts, iou_thr=0.5, contain_thr=0.8):
+    """Gộp phát hiện trùng. Mỗi mask giữ lại kèm: số phiếu từ prompt chứa 'silkworm' và điểm cao nhất của các prompt đó."""
     order = np.argsort(-scores)
-    keep = []
+    keep, group = [], []
     for i in order:
         a = masks[i].sum()
-        dup = False
-        for j in keep:
+        host = None
+        for n, j in enumerate(keep):
             inter = (masks[i] & masks[j]).sum()
             if inter / max(a + masks[j].sum() - inter, 1) > iou_thr or inter / max(min(a, masks[j].sum()), 1) > contain_thr:
-                dup = True
+                host = n
                 break
-        if not dup:
-            keep.append(i)
-    return masks[keep], scores[keep]
+        if host is None:
+            keep.append(i); group.append([i])
+        else:
+            group[host].append(i)
+    sw_votes = np.array([sum(prompts[j] in SW for j in g) for g in group])
+    sw_max = np.array([max([scores[j] for j in g if prompts[j] in SW], default=0.0) for g in group])
+    return masks[keep], scores[keep], sw_votes, sw_max
 
 
 def scan(processor, rgb, thr, min_area):
     h, w = rgb.shape[:2]
-    all_m, all_s = [], []
+    all_m, all_s, all_p = [], [], []
 
     def run(img, place):
         state = processor.set_image(Image.fromarray(img))
-        m, s = detect(processor, state, img.shape[:2], thr)
-        for mi, si in zip(m, s):
+        m, s, pr = detect(processor, state, img.shape[:2], thr)
+        for mi, si, pi in zip(m, s, pr):
             full = place(mi)
             if full is not None:
-                all_m.append(full); all_s.append(si)
+                all_m.append(full); all_s.append(si); all_p.append(pi)
 
     with torch.autocast("cuda", dtype=torch.bfloat16):
         run(rgb, lambda m: m)                                             # ảnh gốc
@@ -90,10 +97,20 @@ def scan(processor, rgb, thr, min_area):
                     return full
                 run(rgb[y0:y0 + t, x0:x0 + t].copy(), place)
     if not all_m:
-        return np.zeros((0, h, w), bool), np.zeros(0)
-    m, s = np.stack(all_m), np.array(all_s)
+        return np.zeros((0, h, w), bool), np.zeros(0), np.zeros(0, int), np.zeros(0)
+    m, s, pr = np.stack(all_m), np.array(all_s), np.array(all_p)
     keep = m.reshape(len(m), -1).sum(1) >= min_area
-    return nms(m[keep], s[keep])
+    return nms(m[keep], s[keep], pr[keep])
+
+
+def shape_features(m):
+    """diện tích, tỉ lệ dài/rộng của hình chữ nhật bao nghiêng, có chạm biên ảnh không."""
+    cs, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    c = max(cs, key=cv2.contourArea)
+    (_, _), (rw, rh), _ = cv2.minAreaRect(c)
+    ys, xs = np.nonzero(m)
+    border = bool(ys.min() == 0 or xs.min() == 0 or ys.max() == m.shape[0] - 1 or xs.max() == m.shape[1] - 1)
+    return int(m.sum()), float(max(rw, rh) / max(min(rw, rh), 1)), border
 
 
 def overlay(rgb, items):
@@ -109,12 +126,15 @@ def overlay(rgb, items):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default="data/sam3_aug20k")
+    ap.add_argument("--data-root", default="data/sam3_aug20k_v3")
     ap.add_argument("--split", default="test_real")
     ap.add_argument("--stems", nargs="*", default=None, help="chỉ chạy các ảnh này (mặc định: cả tập)")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--thr", type=float, default=0.1)
-    ap.add_argument("--cand-score", type=float, default=0.3, help="điểm tối thiểu để tính là ứng viên bị thiếu nhãn")
+    ap.add_argument("--cand-score", type=float, default=0.5, help="điểm tối thiểu của ứng viên bị thiếu nhãn (mảnh vụn, phân thường < 0.4)")
+    ap.add_argument("--cand-votes", type=int, default=0, help="số lần phát hiện tối thiểu từ prompt có 'silkworm' (0 = không bắt buộc)")
+    ap.add_argument("--cand-area", type=int, default=1000, help="diện tích tối thiểu của ứng viên (px ở ảnh 640)")
+    ap.add_argument("--cand-aspect", type=float, default=1.5, help="tằm thì dài: tỉ lệ dài/rộng tối thiểu (bỏ qua nếu chạm biên ảnh)")
     ap.add_argument("--min-area", type=int, default=300)
     ap.add_argument("--gpu-id", type=int, default=0)
     ap.add_argument("--output-dir", required=True)
@@ -136,6 +156,7 @@ def main():
         stems = stems[:args.limit]
     out = Path(args.output_dir)
     (out / "review").mkdir(parents=True, exist_ok=True)
+    (out / "dets").mkdir(exist_ok=True)
 
     report, n_cand_img, n_cand, n_unseen = [], 0, 0, 0
     for k, s in enumerate(stems):
@@ -144,12 +165,17 @@ def main():
         ign = cv2.imread(str(split / "masks_ignore" / f"{s}.png"), 0) > 127
         gt_union = inst > 0
         ids = [i for i in np.unique(inst) if i > 0]
-        masks, scores = scan(processor, rgb, args.thr, args.min_area)
+        masks, scores, votes, swmax = scan(processor, rgb, args.thr, args.min_area)
+        if len(masks):  # lưu thô để chỉnh ngưỡng sau mà không phải quét lại
+            np.savez_compressed(out / "dets" / f"{s}.npz", masks=np.packbits(masks, axis=-1), scores=scores,
+                                sw_votes=votes, sw_max=swmax, shape=np.array(masks.shape[1:]))
 
         cands = []
-        for m, sc in zip(masks, scores):
-            a = m.sum()
-            if sc >= args.cand_score and (m & gt_union).sum() / a < 0.3 and (m & ign).sum() / a < 0.5:
+        for m, sc, nv in zip(masks, scores, votes):
+            a, aspect, border = shape_features(m)
+            if (sc >= args.cand_score and nv >= args.cand_votes and a >= args.cand_area
+                    and (aspect >= args.cand_aspect or border)
+                    and (m & gt_union).sum() / a < 0.3 and (m & ign).sum() / a < 0.5):
                 cands.append((m, float(sc)))
         unseen = []
         for i in ids:
@@ -163,7 +189,7 @@ def main():
 
         if cands or unseen:
             gt_items = [(inst == i, GREEN if i not in unseen else RED) for i in ids] + [(ign, GRAY)]
-            sam_items = [(m, (60, 140, 255)) for m, sc in zip(masks, scores) if not any((m == c[0]).all() for c in cands)]
+            sam_items = [(m, (60, 140, 255)) for m, sc in zip(masks, scores) if sc >= args.cand_score and not any((m == c[0]).all() for c in cands)]
             sam_items += [(c[0], RED) for c in cands]
             img = np.concatenate([rgb, overlay(rgb, gt_items), overlay(rgb, sam_items)], 1)
             cv2.putText(img, "anh goc", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -175,7 +201,8 @@ def main():
         print(f"[{k + 1}/{len(stems)}] {s[:40]}: gt={len(ids)} sam3={len(masks)} nghi_thieu_nhan={len(cands)} gt_sam3_khong_thay={len(unseen)}", flush=True)
 
     summ = dict(split=args.split, images=len(stems), images_with_candidates=n_cand_img, candidates=n_cand,
-                gt_larvae_unseen_by_sam3=n_unseen, thr=args.thr, cand_score=args.cand_score, prompts=PROMPTS)
+                gt_larvae_unseen_by_sam3=n_unseen, thr=args.thr, cand_score=args.cand_score, cand_votes=args.cand_votes,
+                cand_area=args.cand_area, cand_aspect=args.cand_aspect, prompts=PROMPTS)
     (out / "summary.json").write_text(json.dumps(summ, indent=2))
     (out / "per_image.json").write_text(json.dumps(report, indent=1))
     print(json.dumps(summ, indent=2))

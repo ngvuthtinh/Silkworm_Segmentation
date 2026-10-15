@@ -62,7 +62,7 @@ def draw(rgb: np.ndarray, masks: np.ndarray, labels: list[int], texts: list[str]
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default="data/sam3_aug20k")
+    ap.add_argument("--data-root", default="data/sam3_aug20k_v3")
     ap.add_argument("--split", default="test_real")
     ap.add_argument("--num", type=int, default=100)
     ap.add_argument("--num-vis", type=int, default=16)

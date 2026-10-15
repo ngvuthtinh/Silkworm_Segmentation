@@ -37,7 +37,8 @@ for mp in sorted((SRC / "masks").glob("*.png")):
         skipped += 1
         continue
     shutil.copy(SRC / "images" / f"{s}.jpg", OUT / "images" / f"{s}.jpg")
-    shutil.copy(SRC / "labels" / f"{s}.txt", OUT / "labels" / f"{s}.txt")
+    if (SRC / "labels" / f"{s}.txt").exists():            # sam3_seg_v3 không có labels/ (hộp YOLO không còn khớp mask)
+        shutil.copy(SRC / "labels" / f"{s}.txt", OUT / "labels" / f"{s}.txt")
     cv2.imwrite(str(OUT / "masks" / mp.name), np.where(inst > 0, 255, 0).astype(np.uint8))
     cv2.imwrite(str(OUT / "masks_inst" / mp.name), inst)
     cv2.imwrite(str(OUT / "masks_cls" / mp.name), cm)
