@@ -12,7 +12,7 @@ from datetime import datetime
 @dataclass
 class MultiTaskConfig:
     # Dữ liệu (đường dẫn tính từ thư mục gốc dự án)
-    data_root: str = "data/sam3_aug20k"
+    data_root: str = "data/sam3_aug20k_v3"
     img_size: int = 256
     boundary_width: int = 1            # độ dày viền (px, ở kích thước img_size)
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+from datetime import datetime
 import random
 from pathlib import Path
 
@@ -53,6 +54,10 @@ def train(args: argparse.Namespace) -> None:
         cfg.epochs = args.epochs
     if args.batch_size:
         cfg.batch_size = args.batch_size
+    if args.data_root:
+        cfg.data_root = args.data_root
+    if args.out_dir and not args.smoke_test:
+        cfg.work_dir = os.path.join(args.out_dir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
 
     # --resume: tiếp tục đúng thư mục run cũ (nhận thư mục run hoặc đường dẫn last.pth)
     resume_ck = None
@@ -184,6 +189,8 @@ def main() -> None:
     p.add_argument("--gpu", type=str, default="auto", help="Chỉ số GPU hoặc 'auto'")
     p.add_argument("--epochs", type=int, default=None, help="Ghi đè số epoch trong config")
     p.add_argument("--batch-size", type=int, default=None, help="Ghi đè batch size (giảm nếu thiếu VRAM)")
+    p.add_argument("--data-root", type=str, default=None, help="Ghi đè thư mục data trong config (vd data/sam3_aug20k_v3); khi --resume phải truyền lại")
+    p.add_argument("--out-dir", type=str, default=None, help="Thư mục chứa các run (vd Reports/Meeting_2026-10-30/checkpoints/multitask_vmunet); mặc định runs/multitask_vmunet")
     p.add_argument("--resume", type=str, default=None,
                    help="Tiếp tục train: thư mục run (vd runs/multitask_vmunet/2026-10-03_23-12-56) hoặc đường dẫn last.pth")
     train(p.parse_args())

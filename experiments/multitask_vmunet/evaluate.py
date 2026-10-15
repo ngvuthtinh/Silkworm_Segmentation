@@ -67,9 +67,12 @@ def main() -> None:
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--split", default="test", help="valid | test | test_real")
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--data-root", type=str, default=None, help="Ghi đè thư mục data trong config")
     args = p.parse_args()
 
     cfg = MultiTaskConfig()
+    if args.data_root:
+        cfg.data_root = args.data_root
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MultiTaskVMUNet(cfg.depths, cfg.depths_decoder, cfg.drop_path_rate).to(device)
     model.load_state_dict(torch.load(args.checkpoint, map_location="cpu")["model"])
