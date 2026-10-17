@@ -78,11 +78,11 @@ A thorough SAM 3 rescan of every real image (`utils/sam3_scan_dets.py`: 5 text p
 Every change is listed in `<split>/changes.json`. The thresholds are not hand-verified image by image.
 
 ### 2.5. `sam3_aug20k_v3`: per-larva dataset ⭐
-Synthetic scenes composed from `sam3_seg_v3`. Each scene has several larvae, healthy and diseased mixed, larvae overlapping each other, leaves covering larvae, and photometric changes. The backgrounds and the pasted larvae of each split come only from the same split of `sam3_seg_v3`. `train` is the real photos plus composed scenes up to 20,000 images.
+Synthetic scenes composed from `sam3_seg_v3`. Each scene has several larvae, healthy and diseased mixed, larvae overlapping each other, leaves covering larvae, and photometric changes. The backgrounds and the pasted larvae of each split come only from the same split of `sam3_seg_v3`. `train` is the real photos plus composed scenes (20,000 images when built; 11 composed images were removed afterwards, see below).
 
 | Split | Images | Larvae | Larvae / image | Images mixing both classes | Images with ignore regions |
 |---|---|---|---|---|---|
-| `train` | 20,000 (6,872 real + 13,128 composed) | 33,941 | 1.70 | 23% | 31% |
+| `train` | 19,989 (6,872 real + 13,117 composed) | 33,909 | 1.70 | 23% | 31% |
 | `valid` | 1,000 | 1,975 | 1.98 | 35% | 44% |
 | `test` | 1,000 | 1,916 | 1.92 | 30% | 36% |
 | `valid_real` | 505 | 515 | 1.02 | 0% | 29% |
@@ -90,6 +90,7 @@ Synthetic scenes composed from `sam3_seg_v3`. Each scene has several larvae, hea
 
 `valid_real` and `test_real` hold the real photos of `sam3_seg_v3/valid` and `/test`, not composed.
 
+**Fix after the build (2026-10-17).** `utils/check_dataset.py` found 12 train images whose mask is garbage (jagged outline): the real photo `Grasserie-441` (a box-shaped mask over the larva, missed by `fix_seg_v3.py` because its IoU with SAM 3 was 0.30, right at the threshold) and 11 composed images that pasted it. `utils/fix_garbage_masks.py` replaced the real photo's mask with the SAM 3 mask (good). On the 11 composed images the pasted larva pixels themselves are shredded (the garbage mask was used to cut them out), so the repaired masks stayed ragged: **they were removed from train** and moved to `data/legacy/sam3_aug20k_v3_removed/train/`. The pre-fix masks of the 12 images are in `data/legacy/sam3_aug20k_v3_before_fix/`. Run `2026-10-14_23-36-58` (B1) was trained **before** this fix, on the 20,000-image version. Rebuilding with `build_aug20k_v3.sh` from the old `sam3_seg_v3` would bring the 11 images back.
 > ⚠️ **Counting convention.** One larva = one id in `masks_inst`, **even when a leaf hides it into several disjoint pieces** (about 1.8 pieces per larva on composed images). The post-processing (`split_instances`) returns one region per connected piece, so it cannot output one region for two pieces. Consequences on `test`: perfect maps fed as predictions reach inst_f1 **0.794** (ceiling) when a larva is one id, but **0.990** if every visible piece counts as a larva. The trained model scores e2e_f1 0.743 vs 0.886 under the two conventions. Older documents counted pieces (2.87 larvae/image, ceiling 0.97), which is not the convention `evaluate.py` uses. Real photos are unaffected (every connected blob is one larva by construction, so `test_real` cannot show this effect).
 
 Each split contains:
@@ -114,7 +115,7 @@ Caveats:
 - Synthetic scenes are easier than real production images in some ways and not realistic in others (pasted leaves, one background per scene). Always report `test_real` as well.
 - `test_real` is 98% single-larva photos, so it measures diagnosis more than separation. A small hand-labelled set of real multi-larva photos is still the missing piece.
 - Masks are SAM 3 pseudo-masks and classes come from file names; nothing was checked by an expert. Scores measure agreement with these labels.
-- The data has only ~587 distinct real scenes in train; composing more images does not add scene diversity. Photos unlike the training photos (small, dense larvae on leaves) are not handled (see `Reports/Meeting_2026-10-16/results/limitations_summary.md`).
+- The data has only ~587 distinct real scenes in train; composing more images does not add scene diversity. Photos unlike the training photos (small, dense larvae on leaves) are not handled (see `Reports/Meeting_2026-10-17/results/limitations_summary.md`).
 
 ### 2.6. Legacy sets (`data/legacy/`)
 - `sam3_seg_v2`: source masks before the rescan; see §2.3. `sam3_scan`: raw rescan detections used by `fix_seg_v3.py`.

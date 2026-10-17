@@ -7,7 +7,7 @@ Production line: for every photo, find each larva (even touching / overlapping o
 - **Model**: VM-UNet (VSSM) with 3 output channels — body, boundary, disease. One shared encoder–decoder = multi-task.
 - **Loss**: `λ_body·(BCE+Dice) + λ_boundary·(BCE+Dice) + λ_disease·BCE(inside body)`.
 - **Post-processing** (`src/metrics.split_instances`): seeds = body − boundary → watershed over body → one region per larva → mean disease prob → diagnosis.
-- **Data**: `data/sam3_aug20k_v3` (built from `sam3_seg_v3`: scene-based split, SAM 3 masks fixed by a rescan, ignore regions) — train 20,000 (6,872 real + 13,128 composed) / valid 1,000 / test 1,000 composed + valid_real 505 / test_real 499 real photos.
+- **Data**: `data/sam3_aug20k_v3` (built from `sam3_seg_v3`: scene-based split, SAM 3 masks fixed by a rescan, ignore regions) — train 19,989 (6,872 real + 13,117 composed) / valid 1,000 / test 1,000 composed + valid_real 505 / test_real 499 real photos.
 - **Model selection**: best validation `e2e_f1` (separated with IoU ≥ 0.5 *and* correct diagnosis).
 
 ## Upper bound of the post-processing
@@ -33,7 +33,7 @@ Needs the `mamba_ssm` CUDA kernel (installed in `.venv`, torch 2.4.1 + cu124). B
 | CUDA kernel | 16 | 0.19 | 6.3 GB | ~2.6 h |
 
 ## Runs
-Checkpoints: `Reports/Meeting_2026-10-16/checkpoints/multitask_vmunet/<run>/`; results: `Reports/Meeting_2026-10-16/results/<run>/` (see `results/README.md`). Scores are `e2e_f1` on the data named in the column; **only compare numbers measured on the same data**.
+Checkpoints: `Reports/Meeting_2026-10-17/checkpoints/multitask_vmunet/<run>/`; results: `Reports/Meeting_2026-10-17/results/<run>/` (see `results/README.md`). Scores are `e2e_f1` on the data named in the column; **only compare numbers measured on the same data**.
 
 | Run | Trained on | Notes | valid | test | valid_real | test_real |
 |---|---|---|---|---|---|---|
@@ -41,16 +41,24 @@ Checkpoints: `Reports/Meeting_2026-10-16/checkpoints/multitask_vmunet/<run>/`; r
 | 2026-10-03_23-12-56 | `sam3_aug20k_v1` (leaky) | 40 ep, best ep 31 | 0.872 | 0.847 | – | 0.899 |
 | 2026-10-14_00-01-58 | `sam3_aug20k` (clean split, masks not fixed) | 40 ep, best ep 29; baseline B0 | 0.736 (own valid) | 0.709 (own test) | – | 0.970 (own test_real) |
 | same run | scored on `sam3_aug20k_v3` | fair comparison | 0.742 | 0.729 | 0.986 | 0.984 |
-| 2026-10-14_23-36-58 | `sam3_aug20k_v3` | 40 ep, best ep 34; current baseline B1 | 0.747 | 0.743 | 0.990 | 0.983 |
+| 2026-10-14_23-36-58 | `sam3_aug20k_v3` (20,000-image version, before 11 damaged images were removed) | 40 ep, best ep 34; current baseline B1 | 0.747 | 0.743 | 0.990 | 0.983 |
 
 ⚠️ The 2026-10-03 run used `sam3_aug20k_v1`: the Roboflow split leaked (~80% of valid/test images had a same-scene image in train), so its scores are **optimistic and not comparable** with the later runs. Fixing the masks (B0 → B1) changed the scores by 0.005–0.014 on composed images and by ≤ 0.004 on real photos (one seed each, so differences below ~0.01 are not conclusive).
 
 ## Limitations of the baseline (summary)
-Details, evidence and caveats: `Reports/Meeting_2026-10-16/results/limitations_summary.md`.
+Details, evidence and caveats: `Reports/Meeting_2026-10-17/results/limitations_summary.md`.
 - Larvae hidden into several pieces are split into several regions (structural, see the ceiling above).
 - Photos unlike the training photos (small dense larvae on leaves) give almost no detection (probability of body ≤ 0.07), while SAM 3 segments them.
 - On real single-larva photos all 13 errors out of 981 are Grasserie larvae (misdiagnosed, missed, or an extra region).
 - Training and unseen scores are equal on composed images (0.737 vs 0.743): the model is not memorising; the limit is the method and the diversity of the 587 real scenes, not the number of images.
+
+## Research decisions (meeting 2026-10-17)
+Same table as `CLAUDE.md` §3.5; the advisor gave little feedback, so the rest are the student's choices.
+- **Direction (advisor):** adaptation, a lightweight model that still generalises (Limitation 2). Borrow Limitation 2 solutions from work on **humans**, then apply to silkworms; read papers first (L2 on humans, occlusion / overlapping).
+- **Experiments (advisor):** improve the baseline via architecture and loss, one change at a time; also try other models and compare ("try and try").
+- **Counting (student):** a larva hidden by a leaf into several pieces = **one** larva. So occlusion (L1) is a real limitation of the watershed post-processing, not only a definition issue (ceiling ≈ 0.79 on composed images). Keep the per-piece score as a supplementary number.
+- **Centre larva (student):** whole body visible, not cut by the image border. Early evaluation only on centre larvae (also report all). Border larvae are handled later.
+- **Out-of-domain test set:** probably augmented images (undecided). **Lightweight** target: undecided.
 
 ## Open questions
 - Is `boundary_width = 1` enough to separate larvae lying side by side? Try 2 if merges dominate.

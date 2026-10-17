@@ -103,6 +103,16 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 
 ⚠️ **Counting convention**: one larva = one id, even when a leaf hides it into several pieces. `split_instances` outputs one region per connected piece, so on composed images `inst_f1` is capped near **0.79** even for perfect maps (0.99 if each piece counted as a larva). Do not read the low precision on `valid`/`test` (≈0.66) as the model missing larvae: most of it is pieces of one larva counted as several. Details in `DATASET_STRUCTURE.md` §2.5.
 
+### 3.5. Research scope and decisions (meeting 2026-10-17; keep in sync with `meetings/2026-10-30.md`)
+| Topic | Decision | Status |
+|---|---|---|
+| Direction | **Adaptation**: a *lightweight* model that still solves the *general* problem (Limitation 2: fails on unfamiliar / dense photos). Borrow solutions that exist for Limitation 2 on **humans** and apply them to silkworms; first step is reading papers (L2 on humans; object occlusion / overlapping) | Decided by the advisor |
+| Experiments | Improve the VM-UNet baseline through **architecture** and **loss**, one change at a time, everything logged. In parallel stay open: try and compare other models ("try and try", no selection criterion yet) | Decided |
+| Counting | A larva hidden by a leaf into several pieces counts as **one** larva (the official convention). Because `split_instances` returns one region per piece, this makes occlusion (L1) a **real** limitation of the current post-processing (ceiling ≈ 0.79 on composed images). Also report the per-piece number as a supplement | Decided by the student |
+| "Centre" larva | A larva whose **whole body is visible** (not cut by the image border). Larvae at the border show only half or a sliver of the body. Early stage: evaluate only centre larvae (also report all larvae); border larvae are for later but must eventually be handled. Use "does not touch the image border" as the rule | Decided; the margin is not defined |
+| Out-of-domain test set | Probably **augmented** images (not decided) | Undecided |
+| "Lightweight" | No target yet (VM-UNet has 27.4 M parameters) | Undecided |
+
 ---
 
 ## 🎓 4. Mentor Instructions for AI Assistant
@@ -123,7 +133,7 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 
 See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - `data/yolo_bbox` — raw images + boxes + disease class.
-- `data/sam3_aug20k_v3` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`); `train` 20,000 (6,872 real + 13,128 composed) / `valid` 1,000 / `test` 1,000 (composed) and `valid_real` 505 / `test_real` 499 (real photos). Built from `sam3_seg_v3`: scene-based split (old Roboflow split leaked ~80% of valid/test), SAM 3 masks fixed by a thorough rescan (bad masks removed, missing larvae added or put in `masks_ignore/`).
+- `data/sam3_aug20k_v3` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`); `train` 19,989 (6,872 real + 13,117 composed; 11 damaged composed images removed on 2026-10-17, see DATASET_STRUCTURE §2.5) / `valid` 1,000 / `test` 1,000 (composed) and `valid_real` 505 / `test_real` 499 (real photos). Built from `sam3_seg_v3`: scene-based split (old Roboflow split leaked ~80% of valid/test), SAM 3 masks fixed by a thorough rescan (bad masks removed, missing larvae added or put in `masks_ignore/`).
 - `data/legacy/` — everything older: `sam3_seg_v2` (source before the rescan), `sam3_seg_v3`, `sam3_scan` (raw rescan detections), `sam3_aug20k` (built from v2, masks not fixed; used by run `2026-10-14_00-01-58`), `sam3_aug20k_v1` (leaky), `sam3_seg`, `mixed_10k`, `silkynet_seg`. `sam3_seg`, `sam3_aug20k_v1` and `mixed_10k` are approximate rebuilds of folders deleted on 2026-10-12, so `multitask_vmunet_v1` and `multitask_swinunet` can only be retrained after pointing them to `data/legacy/...`.
 - Labels are SAM 3 pseudo-masks and class-from-filename; they have not been checked by an expert.
 
@@ -153,4 +163,4 @@ Rules: split by **scene**, never by image (near-identical shots of one larva sta
 | Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py), [`utils/build_sam3_seg_v2/`](utils/build_sam3_seg_v2/) |
 | Run outputs | `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<timestamp>/` |
 | Results of a run | `Reports/Meeting_<date>/results/<timestamp>/eval_data_<data>/` (see `results/README.md`) |
-| Current limitations of the baseline | `Reports/Meeting_2026-10-16/results/limitations_summary.md` |
+| Current limitations of the baseline | `Reports/Meeting_2026-10-17/results/limitations_summary.md` |
