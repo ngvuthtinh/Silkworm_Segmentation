@@ -8,7 +8,7 @@ rồi gộp bằng NMS. Đối chiếu với masks_inst / masks_ignore:
   - gt_unseen = con có nhãn mà SAM 3 không phát hiện được (nghi nhãn sai / SAM 3 bỏ sót)
 
   /home/subnh5/miniconda3/envs/sam3/bin/python utils/sam3_recheck.py --split test_real --gpu-id 0 \
-      --output-dir Reports/2026-10-16/sam3_recheck/test_real
+      --output-dir Reports/Meeting_2026-10-17/results/sam3_check/sam3_recheck/test_real
 """
 from __future__ import annotations
 

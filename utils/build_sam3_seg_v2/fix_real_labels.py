@@ -1,8 +1,8 @@
 """
 Sửa nhãn ảnh THẬT bằng kết quả quét kỹ của SAM 3 (utils/sam3_recheck.py, thư mục dets/). Ghi ra split MỚI, không đụng split cũ.
 
-  python utils/build_sam3_seg_v2/fix_real_labels.py data/sam3_aug20k test_real Reports/2026-10-16/sam3_recheck/test_real test_real_v2
-  python utils/build_sam3_seg_v2/fix_real_labels.py data/sam3_aug20k valid_real Reports/2026-10-16/sam3_recheck/valid_real valid_real_v2
+  python utils/build_sam3_seg_v2/fix_real_labels.py data/sam3_aug20k test_real Reports/Meeting_2026-10-17/results/sam3_check/sam3_recheck/test_real test_real_v2
+  python utils/build_sam3_seg_v2/fix_real_labels.py data/sam3_aug20k valid_real Reports/Meeting_2026-10-17/results/sam3_check/sam3_recheck/valid_real valid_real_v2
 
 Quy tắc (mỗi ảnh):
   1. Con có nhãn bị coi là HỎNG nếu SAM 3 không phát hiện được (IoU < 0.3 với mọi phát hiện) VÀ mask lốm đốm
