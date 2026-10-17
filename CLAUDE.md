@@ -103,7 +103,7 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 
 ⚠️ **Counting convention**: one larva = one id, even when a leaf hides it into several pieces. `split_instances` outputs one region per connected piece, so on composed images `inst_f1` is capped near **0.79** even for perfect maps (0.99 if each piece counted as a larva). Do not read the low precision on `valid`/`test` (≈0.66) as the model missing larvae: most of it is pieces of one larva counted as several. Details in `DATASET_STRUCTURE.md` §2.5.
 
-### 3.5. Research scope and decisions (meeting 2026-10-17; keep in sync with `meetings/2026-10-30.md`)
+### 3.5. Research scope and decisions (meeting 2026-10-17; keep in sync with `meetings/2026-10-17.md`)
 | Topic | Decision | Status |
 |---|---|---|
 | Direction | **Adaptation**: a *lightweight* model that still solves the *general* problem (Limitation 2: fails on unfamiliar / dense photos). Borrow solutions that exist for Limitation 2 on **humans** and apply them to silkworms; first step is reading papers (L2 on humans; object occlusion / overlapping) | Decided by the advisor |
