@@ -23,17 +23,7 @@ This document is the primary guidance file for AI Assistants (Claude / Antigravi
 
 ## 🏗️ 2. Repository 4-Tier Architecture
 
-Detailed in [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md):
-
-```text
-Silkworm_Segmentation/
-├── models/          ← [TIER 1] Upstream backbones (do not edit)
-├── src/             ← [TIER 2] Shared code: datasets, losses, metrics
-├── experiments/     ← [TIER 3] One folder per experiment (config, model, train, evaluate, inference)
-├── runs/            ← [TIER 4] Auto-generated checkpoints & logs (never commit)
-├── data/            ← Datasets (never commit) — see DATASET_STRUCTURE.md
-└── utils/           ← Data generation scripts (SAM 3 labelling, augmentation)
-```
+Layout in [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md): `models/` (T1) → `src/` (T2) → `experiments/` (T3) → `runs/` (T4); `data/` and `runs/` are never committed.
 
 ### 🔒 Tier Rules
 1. **`models/`** (`vmunet`, `swin_unet`, `sam3`, `silkynet`): upstream code. Do **not** modify; wrap backbones in `experiments/<exp>/model.py`.
@@ -155,11 +145,6 @@ Rules: split by **scene**, never by image (near-identical shots of one larva sta
 
 | Task | File |
 |---|---|
-| Hyperparameters (LR, batch, epochs, λ, thresholds) | [`experiments/multitask_vmunet/config.py`](experiments/multitask_vmunet/config.py) |
-| Model (3-channel VM-UNet) | [`experiments/multitask_vmunet/model.py`](experiments/multitask_vmunet/model.py) |
-| Dataset / boundary generation | [`src/dataset_instance.py`](src/dataset_instance.py) |
-| Loss | [`src/losses.py`](src/losses.py) → `InstanceMultiTaskLoss` |
-| Per-larva splitting & metrics | [`src/metrics.py`](src/metrics.py) |
 | Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py), [`utils/build_sam3_seg_v2/`](utils/build_sam3_seg_v2/) |
 | Run outputs | `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<timestamp>/` |
 | Results of a run | `Reports/Meeting_<date>/results/<timestamp>/eval_data_<data>/` (see `results/README.md`) |
