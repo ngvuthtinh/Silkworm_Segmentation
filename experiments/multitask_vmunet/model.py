@@ -36,11 +36,12 @@ class MultiTaskVMUNet(nn.Module):
         depths: list[int] | None = None,
         depths_decoder: list[int] | None = None,
         drop_path_rate: float = 0.2,
+        num_outputs: int = 3,
     ):
         super().__init__()
         self.backbone = VSSM(
             in_chans=3,
-            num_classes=3,
+            num_classes=num_outputs,    # 3 = thân, biên, bệnh; experiments khác có thể thêm kênh (vd embedding)
             depths=depths or [2, 2, 2, 2],
             depths_decoder=depths_decoder or [2, 2, 2, 1],
             drop_path_rate=drop_path_rate,

@@ -157,13 +157,112 @@ def split_instances(
     return inst, info
 
 
+def diagnose_instances(
+    inst: np.ndarray, disease_prob: np.ndarray, disease_thr: float = 0.5
+) -> dict[int, tuple[int, float]]:
+    """{id: (class_id, p_grasserie)} từ bản đồ id; xác suất bệnh = trung bình disease_prob trên pixel của con (0 = Grasserie, 1 = Healthy)."""
+    info: dict[int, tuple[int, float]] = {}
+    for i in np.unique(inst):
+        if i == 0:
+            continue
+        p = float(disease_prob[inst == i].mean())
+        info[int(i)] = (0 if p >= disease_thr else 1, p)
+    return info
+
+
+def merge_fragments(inst: np.ndarray, embedding: np.ndarray, merge_thr: float = 1.5) -> np.ndarray:
+    """
+    Gộp các mảnh RỜI NHAU của cùng một con thành một id, dựa trên embedding (DiscriminativeLoss).
+
+    `split_instances` trả về một vùng cho mỗi thành phần liền kề, nên con bị lá che thành 2 mảnh ra 2 id.
+    Ở đây tính embedding trung bình của từng vùng rồi gộp hai vùng nếu khoảng cách < `merge_thr` (liên kết đơn:
+    A~B và B~C thì cả ba thành một). Lý do chọn ngưỡng: loss ép pixel cách tâm cụm ≤ δ_v nên hai mảnh cùng con có
+    tâm cách nhau ≲ 2δ_v, còn hai con khác nhau có tâm cách ≳ 2δ_d − 2δ_v; với δ_v = 0.5, δ_d = 1.5 thì ngưỡng
+    hợp lệ nằm trong khoảng (1.0, 2.0), mặc định 1.5 là điểm giữa. Nên chỉnh trên tập valid.
+
+    inst: [H, W] id từng vùng (0 = nền); embedding: [D, H, W]. Trả về bản đồ id mới (id không nhất thiết liên tục).
+    """
+    ids = [int(i) for i in np.unique(inst) if i != 0]
+    if len(ids) < 2:
+        return inst
+    means = np.stack([embedding[:, inst == i].mean(axis=1) for i in ids])        # [n, D]
+    parent = list(range(len(ids)))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a in range(len(ids)):
+        for b in range(a + 1, len(ids)):
+            if np.linalg.norm(means[a] - means[b]) < merge_thr:
+                parent[find(b)] = find(a)
+    out = inst.copy()
+    for k, i in enumerate(ids):
+        out[inst == i] = ids[find(k)]
+    return out
+
+
+def cluster_spatial_embeddings(
+    offset: np.ndarray,
+    sigma: np.ndarray,
+    seed: np.ndarray,
+    fg_mask: np.ndarray,
+    seed_thr: float = 0.5,
+    min_area: int = 30,
+    coord_scale: int | None = None,
+) -> np.ndarray:
+    """
+    Tách từng con từ đầu ra "spatial embeddings" (Neven et al., 2019; mục 3.6), KHÔNG dùng watershed và không cần các mảnh liền kề.
+
+    offset [2, H, W] và sigma [n, H, W] là giá trị thô của mô hình, seed [H, W] là xác suất (sau sigmoid), fg_mask [H, W] bool
+    là vùng thân tằm (từ kênh thân). Lặp: chọn pixel chưa gán có seed cao nhất → embedding của nó là tâm, σ lấy tại chính điểm
+    đó → mọi pixel có φ = exp(−Σ (e − tâm)²·exp(10σ)) > 0.5 thuộc con này. Hai mảnh rời của cùng một con có cùng tâm nên
+    cùng một id; một id = một con.
+
+    Khác repo gốc: vùng nền lấy từ kênh thân (không phải seed > 0.5); chỉ gán các pixel còn chưa gán (không ghi đè con trước);
+    ngưỡng diện tích tính theo `min_area` (ảnh 256²) thay vì 128 px của ảnh 2048×1024. Trả về bản đồ id [H, W] int32 (0 = nền).
+    """
+    height, width = seed.shape
+    if coord_scale is None:                                                             # mặc định: chuẩn hoá [0, 1] theo cả ảnh (đúng khi ảnh = cỡ lúc train)
+        xm, ym = np.meshgrid(np.linspace(0, 1, width, dtype=np.float32), np.linspace(0, 1, height, dtype=np.float32))
+    else:                                                                               # cỡ pixel như lúc train: 1/(coord_scale-1) mỗi pixel, bất kể cỡ ảnh lúc suy luận
+        xm, ym = np.meshgrid(np.arange(width, dtype=np.float32) / (coord_scale - 1), np.arange(height, dtype=np.float32) / (coord_scale - 1))
+    emb = np.tanh(offset.astype(np.float32)) + np.stack([xm, ym])                       # [2, H, W]
+    flat = np.flatnonzero(fg_mask.ravel())
+    out = np.zeros(height * width, np.int32)
+    if flat.size < min_area:
+        return out.reshape(height, width)
+    e = emb.reshape(2, -1)[:, flat]                                                     # [2, M]
+    s_all = sigma.reshape(sigma.shape[0], -1)[:, flat].astype(np.float32)               # [n, M]
+    sd = seed.ravel()[flat]
+    free = np.ones(flat.size, bool)
+    labels = np.zeros(flat.size, np.int32)
+    count = 1
+    while free.sum() >= min_area:
+        k = int(np.argmax(np.where(free, sd, -1.0)))
+        if sd[k] < seed_thr:
+            break
+        phi = np.exp(-(((e - e[:, k:k + 1]) ** 2) * np.exp(s_all[:, k:k + 1] * 10.0)).sum(0))
+        prop = phi > 0.5                                    # luôn gồm chính điểm hạt giống (φ = 1)
+        take = prop & free
+        if prop.sum() >= min_area and take.sum() / prop.sum() > 0.5:
+            labels[take] = count
+            count += 1
+        free &= ~prop
+    out[flat] = labels
+    return out.reshape(height, width)
+
+
 def gt_instance_classes(inst_gt: np.ndarray, disease_gt: np.ndarray) -> dict[int, int]:
-    """{id: class_id} cho GT (0 = Grasserie, 1 = Healthy), lấy theo đa số pixel của mỗi con."""
+    """{id: class_id} cho GT (0 = Grasserie, 1 = Healthy, -1 = chưa biết bệnh), lấy theo đa số pixel của mỗi con."""
     out = {}
     for i in np.unique(inst_gt):
         if i == 0:
             continue
-        out[int(i)] = 0 if disease_gt[inst_gt == i].mean() >= 0.5 else 1
+        m = disease_gt[inst_gt == i].mean()
+        out[int(i)] = -1 if m < 0 else 0 if m >= 0.5 else 1
     return out
 
 
@@ -213,7 +312,7 @@ def match_instances(
             continue
         used_g.add(g); used_p.add(p)
         tp += 1
-        if pred_cls.get(p) == gt_cls[g]:
+        if gt_cls[g] < 0 or pred_cls.get(p) == gt_cls[g]:      # con chưa biết bệnh: không bao giờ tính là chẩn đoán sai (e2e_f1 = inst_f1)
             cls_correct += 1
             if gt_cls[g] == 0:
                 hit_g += 1
