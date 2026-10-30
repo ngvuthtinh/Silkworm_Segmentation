@@ -53,7 +53,7 @@ def check_image(args: tuple[Path, str, int]) -> dict:
     ids = [int(i) for i in np.unique(inst) if i > 0]
     if not ids:
         flags["no_larva"].append(0)
-    real = not stem.startswith("aug")
+    real = stem.lower().startswith(("grasserie", "healthy"))      # lớp lấy từ tên file chỉ có ở ảnh thật có tiền tố này (không có ở aug_*, fl_*, silkynet_*)
     want = 1 if stem.lower().startswith("grasserie") else 2
     for i in ids:
         m = inst == i

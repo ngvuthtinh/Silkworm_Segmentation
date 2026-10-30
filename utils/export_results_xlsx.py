@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Tổng hợp kết quả thí nghiệm vào một file xlsx: Reports/ketqua_thi_nghiem.xlsx
+Tổng hợp kết quả thí nghiệm vào một file xlsx: Reports/experiment_results.xlsx
 
   python utils/export_results_xlsx.py
 
 Quét:
   Reports/Meeting_*/checkpoints/<exp>/<run>/config.yaml      → data dùng để train
   Reports/Meeting_*/results/<run>/eval_data_<x>/eval_*.txt   → điểm (JSON sau dòng "[split] N ảnh")
+  Reports/Meeting_*/results/<model>/scores/eval_*.txt       → như trên, kiểu thư mục theo model; tên run và data ở scores/run.yaml
+                                                              (run.yaml có thể thêm `train_data:`; tên run phải khác nhau giữa các experiment)
 
 Hai tab:
   "Kết quả"  ngắn gọn: mỗi dòng là (run, data chấm), các cột tự điền + 3 cột nhập tay (Mã, Đổi gì, Ghi chú).
@@ -26,7 +28,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-XLSX = Path("Reports/ketqua_thi_nghiem.xlsx")
+XLSX = Path("Reports/experiment_results.xlsx")
 SHEET_MAIN, SHEET_DETAIL = "Kết quả", "Chi tiết"
 MAIN_COLS = ["Mã", "Run", "Đổi gì", "Data train", "Data chấm", "e2e_f1 test (ghép)", "e2e_f1 test_real (ảnh thật)",
              "Sót con bệnh (recall test_real)", "Ghi chú"]
@@ -64,9 +66,14 @@ def read_eval(path: Path) -> dict[str, float]:
     return json.loads(text[text.index("{"):text.rindex("}") + 1])
 
 
+TRAIN_DATA_FROM_YAML: dict[str, str] = {}          # run.yaml có thể ghi `train_data` (vd run SOLOv2: config.yaml không có data_root)
+
+
 def train_data_of(run: str, configs: dict[str, dict]) -> str:
     if run in TRAIN_DATA_OVERRIDE:
         return TRAIN_DATA_OVERRIDE[run]
+    if run in TRAIN_DATA_FROM_YAML:
+        return TRAIN_DATA_FROM_YAML[run]
     root = configs.get(run, {}).get("data_root")
     return Path(root).name if root else "?"
 
@@ -76,13 +83,21 @@ def collect() -> tuple[list[dict], list[dict]]:
     for cfg_p in Path("Reports").glob("Meeting_*/checkpoints/*/*/config.yaml"):
         configs[cfg_p.parent.name] = yaml.safe_load(cfg_p.read_text())
 
+    found = [(ev, ev.parent.parent.name, ev.parent.name.removeprefix("eval_data_"))
+             for ev in sorted(Path("Reports").glob("Meeting_*/results/*/eval_data_*/eval_*.txt"))]
+    # Kiểu thư mục theo model (từ họp 30/10): results/<model>/scores/eval_*.txt, tên run + data ghi trong scores/run.yaml
+    for ev in sorted(Path("Reports").glob("Meeting_*/results/*/scores/eval_*.txt")):
+        info = yaml.safe_load((ev.parent / "run.yaml").read_text())
+        found.append((ev, str(info["run"]), str(info["data"])))
+        if info.get("train_data"):
+            TRAIN_DATA_FROM_YAML[str(info["run"])] = str(info["train_data"])
+
     detail, groups = [], {}
-    for ev in sorted(Path("Reports").glob("Meeting_*/results/*/eval_data_*/eval_*.txt")):
+    for ev, run, data_key in found:
         m = EVAL_RE.match(ev.name)
         if not m:
             continue
-        run, data_key = ev.parent.parent.name, ev.parent.name.removeprefix("eval_data_")
-        data = DATA_NAMES.get(data_key, ev.parent.name)
+        data = DATA_NAMES.get(data_key, f"eval_data_{data_key}")
         scores = read_eval(ev)
         detail.append({"Run": run, "Data chấm": data, "Split": m.group(1), **{k: scores.get(k) for k in METRICS},
                        "n_gt_worms": scores.get("n_gt_worms"), "Nguồn": str(ev),
