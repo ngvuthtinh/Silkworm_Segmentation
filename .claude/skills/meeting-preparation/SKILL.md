@@ -21,7 +21,7 @@ Reference examples (read both before writing; match their tone and level of deta
 
 Look only at work dated after the previous meeting:
 - `git log --since=<previous date>` and `git status` (much work may be uncommitted).
-- `Reports/Meeting_<next date>/` — `results/README.md` (model → folder → run), `results/<model>/scores/eval_*.txt` + `run.yaml`, `results/comparison/` (tables, images, `dense_photos/`), `literature/`.
+- `Reports/Meeting_<next date>/` — `results/README.md` (model → folder → run), `results/<family>/scores/<model>/eval_*.txt` + `run.yaml`, `results/<family>/images*/` (one picture per test image, all models of the family side by side), `results/comparison/mix_models/` (all models + `summary.md`), `literature/`.
 - `experiments/*/notes.md` changed since that date (method, loss weights, risks).
 - `Reports/experiment_results.xlsx` (run `python utils/export_results_xlsx.py` first so it is current).
 - CLAUDE.md §3.5 (research scope and decisions).

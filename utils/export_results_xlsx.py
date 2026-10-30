@@ -8,6 +8,7 @@ Quét:
   Reports/Meeting_*/checkpoints/<exp>/<run>/config.yaml      → data dùng để train
   Reports/Meeting_*/results/<run>/eval_data_<x>/eval_*.txt   → điểm (JSON sau dòng "[split] N ảnh")
   Reports/Meeting_*/results/<model>/scores/eval_*.txt       → như trên, kiểu thư mục theo model; tên run và data ở scores/run.yaml
+  Reports/Meeting_*/results/<family>/scores/<model>/eval_*.txt → như trên, khi nhiều model gộp chung một thư mục họ (vmunet/, solov2/)
                                                               (run.yaml có thể thêm `train_data:`; tên run phải khác nhau giữa các experiment)
 
 Hai tab:
@@ -86,7 +87,9 @@ def collect() -> tuple[list[dict], list[dict]]:
     found = [(ev, ev.parent.parent.name, ev.parent.name.removeprefix("eval_data_"))
              for ev in sorted(Path("Reports").glob("Meeting_*/results/*/eval_data_*/eval_*.txt"))]
     # Kiểu thư mục theo model (từ họp 30/10): results/<model>/scores/eval_*.txt, tên run + data ghi trong scores/run.yaml
-    for ev in sorted(Path("Reports").glob("Meeting_*/results/*/scores/eval_*.txt")):
+    score_files = sorted(Path("Reports").glob("Meeting_*/results/*/scores/eval_*.txt")) + \
+        sorted(Path("Reports").glob("Meeting_*/results/*/scores/*/eval_*.txt"))
+    for ev in score_files:
         info = yaml.safe_load((ev.parent / "run.yaml").read_text())
         found.append((ev, str(info["run"]), str(info["data"])))
         if info.get("train_data"):

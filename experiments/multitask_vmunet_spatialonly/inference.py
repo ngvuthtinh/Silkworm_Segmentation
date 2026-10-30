@@ -1,7 +1,7 @@
 """
 experiments/multitask_vmunet_spatialonly/inference.py — nạp model và dự đoán cho một ảnh RGB bất kỳ.
 
-Các script vẽ ảnh (Reports/Meeting_2026-10-30/results/comparison/source/make_figures_spatialonly.py, dense_photos.py) dùng hai hàm này.
+Các script vẽ ảnh (Reports/Meeting_2026-10-30/results/comparison/source/make_figures_spatialonly.py, make_figures_watershed_mix.py, dense_photos.py) dùng hai hàm này.
 Tách con và vẽ dùng `spatial_instances` (evaluate.py) và `src.visualize_instances.draw_instances_colored`.
 """
 

@@ -71,4 +71,4 @@ detectron2 (git, commit 247691a) was built into `.venv` on 2026-10-28 with `CUDA
 - ⚠️ **Licence: AdelaiDet is for non-commercial use only** (`models/AdelaiDet/LICENSE`; commercial licence from the authors). Fine for the thesis; a production line needs the authors' permission (same situation as SpatialEmbeddings, CC BY-NC).
 
 ## Results table
-Not trained yet. After training + evaluation: save the scores in `Reports/Meeting_<date>/results/solov2_<variant>/scores/` (`eval_*.txt` + `run.yaml` with `run`, `data: v3`, `score_thr`), run `python utils/export_results_xlsx.py`, fill `Mã` / `Đổi gì` / `Ghi chú`.
+Not trained yet. After training + evaluation: save the scores in `Reports/Meeting_<date>/results/solov2/scores/<variant>/` (`eval_*.txt` + `run.yaml` with `run`, `data: v3`, `score_thr`), run `python utils/export_results_xlsx.py`, fill `Mã` / `Đổi gì` / `Ghi chú`.
