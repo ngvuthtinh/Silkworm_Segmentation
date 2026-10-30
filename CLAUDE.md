@@ -41,9 +41,9 @@ Layout in [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md): `models/` (T1) → `sr
    ```
 4. **Runs and results** (one place per meeting, never scatter them):
    - `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<YYYY-MM-DD_HH-MM-SS>/`: `checkpoints/{best,last}.pth`, `logs/train_log.csv`, `config.yaml` (pass `--out-dir` to `train.py`; without it the run goes to `runs/multitask_vmunet/`).
-   - `Reports/Meeting_<date>/results/<same run name>/eval_data_<data>/`: evaluation scores and images of **that** run. `<data>` says which data it was scored on. Analyses not tied to one run (SAM 3 checks) go in `results/sam3_check/`. `results/README.md` maps run → meaning → where its results are.
+   - From meeting 30/10 on, one folder per model, named after the experiment (`results/disc/`, `results/spatialemb/`): `scores/` = `eval_<split>.txt` + `run.yaml` (`run: <timestamp>`, `data: v3`, threshold used), `images/` = test images (Ảnh gốc | Mask đáp án | model); plus `results/comparison/` for side-by-side images (Ảnh gốc | Mask đáp án | model A | model B), the comparison table and the scripts. Images carry only the panel names underneath. Older meetings use `results/<run>/eval_data_<data>/`; `utils/export_results_xlsx.py` reads both. Analyses not tied to one run (SAM 3 checks) go in `results/sam3_check/`. `results/README.md` maps folder → model → run.
    - `<date>` is the date of the meeting where the work is presented (work done between two meetings goes into the later one).
-5. **Results table** (`Reports/ketqua_thi_nghiem.xlsx`, one file; tab "Kết quả" is the short view, tab "Chi tiết" has every metric for the thesis). **After every train + evaluation, update it**: save the scores as `eval_*.txt` in `results/<run>/eval_data_<x>/`, run `python utils/export_results_xlsx.py` (fills the numbers, keeps the hand-written cells), then fill the new row's three manual columns: `Mã` (B0, B1, E1, …), `Đổi gì` (the **one** thing changed since the previous experiment: loss *or* architecture, never both) and `Ghi chú` (one line). Never edit the old rows' numbers by hand.
+5. **Results table** (`Reports/experiment_results.xlsx`, one file; tab "Kết quả" is the short view, tab "Chi tiết" has every metric for the thesis). **After every train + evaluation, update it**: save the scores as `eval_*.txt` in `results/<model>/scores/` (with `run.yaml`), run `python utils/export_results_xlsx.py` (fills the numbers, keeps the hand-written cells), then fill the new row's three manual columns: `Mã` (B0, B1, E1, …), `Đổi gì` (the **one** thing changed since the previous experiment: loss *or* architecture, never both) and `Ghi chú` (one line). Never edit the old rows' numbers by hand.
 
 ---
 
@@ -57,6 +57,7 @@ source .venv/bin/activate   # Python 3.12, torch 2.4.1 + CUDA 12.4, mamba_ssm 2.
 ```
 - VM-UNet needs the CUDA `selective_scan` kernel from `mamba_ssm`. Without it `vmamba.py` falls back to a pure-PyTorch loop: ~18 s per step instead of ~0.1 s (batch 8, 256²). At startup you must see `[VMAMBA] Fast C++ CUDA selective_scan_fn loaded successfully!`.
 - torch is pinned to 2.4.1 because prebuilt `mamba_ssm` wheels only exist up to torch 2.4 (the server's `nvcc` 11.3 cannot build it for newer CUDA). Install steps: see README.
+- detectron2 (for `experiments/solov2`, AdelaiDet's SOLOv2) is installed in the same `.venv`, built with `CUDA_HOME=/usr/local/cuda-12.6` (the `nvcc` 11.3 on PATH is too old); AdelaiDet's own CUDA ops are not built (see `experiments/solov2/adet_shim.py`).
 
 ### 3.2. Data
 ```bash
@@ -77,8 +78,11 @@ python -m experiments.multitask_vmunet.evaluate --checkpoint <run>/checkpoints/b
 python -m experiments.multitask_vmunet.evaluate --checkpoint ... --split test_real [--data-root <dir>]
 ```
 - The default `data_root` (config.py) is `data/sam3_aug20k_v3`. To score an old run on the data it was trained on, pass `--data-root data/legacy/sam3_aug20k`. **Always record which data a score was measured on.**
+- **Dense-photo check (mandatory for every new model/run):** the two photos in `data/test/` (`image.png`, `image copy.png`: many larvae on green leaves, no labels, out of the training domain) must always be run and shown, because handling a photo with very many larvae is a goal of the project (Limitation 2). Update the checkpoint paths in `Reports/Meeting_2026-10-30/results/comparison/source/dense_photos.py` for the new run and run `PYTHONPATH=. python .../dense_photos.py --gpu <n>` (output: `comparison/dense_photos/*.png` + `counts.md`). Report the body-channel probability too: if it is ≈ 0 the model does not see the larvae at all (domain gap), not a post-processing problem. Status on 2026-10-28: B1, Disc and SpatialEmb find 0–2 larvae on these photos (body max prob ≈ 0.0–0.07 for B1).
 - With `--resume` pass `--data-root` again; the run folder is the one given to `--resume`.
 - Run training in `tmux` (`tmux new -s <name>`, detach with Ctrl+b d); it survives closing the terminal but not a server reboot, then use `--resume`.
+
+- **Mixed data** (v3 + `dense_seg_v2`, disease loss off for the dense photos): VM-UNet scripts `multitask_vmunet_spatialemb/spatialonly` take `--train-mix v3:1 dense_v2:8` (`src/dataset_instance.py::MixedScaleCropDataset`, sources in `MIX_SOURCES`); SOLOv2 (`experiments/solov2`, variants `r50` / `mamba` / `vmunet`) takes `--train-sets v3:train dense_v2:train*8`. `utils/launch_mix_runs.sh` starts the five runs in tmux (`mix_*` sessions).
 
 ### 3.4. Metrics in `train_log.csv`
 | Column | Meaning |
@@ -96,7 +100,7 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 ### 3.5. Research scope and decisions (meeting 2026-10-17; keep in sync with `meetings/2026-10-17.md`)
 | Topic | Decision | Status |
 |---|---|---|
-| Direction | **Adaptation**: a *lightweight* model that still solves the *general* problem (Limitation 2: fails on unfamiliar / dense photos). Borrow solutions that exist for Limitation 2 on **humans** and apply them to silkworms; first step is reading papers (L2 on humans; object occlusion / overlapping) | Decided by the advisor |
+| Direction | **Adaptation**: a *lightweight* model that still solves the *general* problem (Limitation 2: fails on unfamiliar / dense photos). Borrow solutions that existing papers give for similar problems and apply them to silkworms; first step is reading papers (object occlusion / overlapping, then L2). ("Papers on humans" was only an example said at the meeting, not a requirement; corrected 2026-10-28) | Decided by the advisor |
 | Experiments | Improve the VM-UNet baseline through **architecture** and **loss**, one change at a time, everything logged. In parallel stay open: try and compare other models ("try and try", no selection criterion yet) | Decided |
 | Counting | A larva hidden by a leaf into several pieces counts as **one** larva (the official convention). Because `split_instances` returns one region per piece, this makes occlusion (L1) a **real** limitation of the current post-processing (ceiling ≈ 0.79 on composed images). Also report the per-piece number as a supplement | Decided by the student |
 | "Centre" larva | A larva whose **whole body is visible** (not cut by the image border). Larvae at the border show only half or a sliver of the body. Early stage: evaluate only centre larvae (also report all larvae); border larvae are for later but must eventually be handled. Use "does not touch the image border" as the rule | Decided; the margin is not defined |
@@ -124,6 +128,7 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 See [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - `data/yolo_bbox` — raw images + boxes + disease class.
 - `data/sam3_aug20k_v3` — **primary**: per-larva maps (`masks_inst`, `masks_cls`, `masks_ignore`); `train` 19,989 (6,872 real + 13,117 composed; 11 damaged composed images removed on 2026-10-17, see DATASET_STRUCTURE §2.5) / `valid` 1,000 / `test` 1,000 (composed) and `valid_real` 505 / `test_real` 499 (real photos). Built from `sam3_seg_v3`: scene-based split (old Roboflow split leaked ~80% of valid/test), SAM 3 masks fixed by a thorough rescan (bad masks removed, missing larvae added or put in `masks_ignore/`).
+- `data/dense_seg_v2` — **dense multi-larva photos** with per-larva masks and **no disease label** (`fl.v2i.coco` CC BY 4.0 + Silkynet; 563 train / 40 valid / 20 test; 12,326 larvae). = `data/legacy/dense_seg_v1` (original polygons, which miss many larvae) + larvae added by a SAM 3 scan (score ≥ 0.7 → label, 0.5–0.7 → ignore; `utils/build_dense_seg/apply_sam3_missing.py`). Disease class is `3 = unknown`: dataset returns `disease = -1`, the disease loss skips it and scoring never counts a diagnosis there as wrong (`e2e_f1 = inst_f1`). For Limitation 2; see DATASET_STRUCTURE §2.7. Larvae SAM 3 scores < 0.5 are still unlabelled.
 - `data/legacy/` — everything older: `sam3_seg_v2` (source before the rescan), `sam3_seg_v3`, `sam3_scan` (raw rescan detections), `sam3_aug20k` (built from v2, masks not fixed; used by run `2026-10-14_00-01-58`), `sam3_aug20k_v1` (leaky), `sam3_seg`, `mixed_10k`, `silkynet_seg`. `sam3_seg`, `sam3_aug20k_v1` and `mixed_10k` are approximate rebuilds of folders deleted on 2026-10-12, so `multitask_vmunet_v1` and `multitask_swinunet` can only be retrained after pointing them to `data/legacy/...`.
 - Labels are SAM 3 pseudo-masks and class-from-filename; they have not been checked by an expert.
 
@@ -147,5 +152,7 @@ Rules: split by **scene**, never by image (near-identical shots of one larva sta
 |---|---|
 | Data generation | [`utils/augment_mixed_10k.py`](utils/augment_mixed_10k.py), [`utils/build_sam3_seg_v2/`](utils/build_sam3_seg_v2/) |
 | Run outputs | `Reports/Meeting_<date>/checkpoints/multitask_vmunet/<timestamp>/` |
-| Results of a run | `Reports/Meeting_<date>/results/<timestamp>/eval_data_<data>/` (see `results/README.md`) |
+| Results of a model | `Reports/Meeting_<date>/results/<model>/{scores,images}/`, comparisons in `results/comparison/` (see `results/README.md`) |
 | Current limitations of the baseline | `Reports/Meeting_2026-10-17/results/limitations_summary.md` |
+| Content for the next advisor meeting | `Reports/Meeting_<date>/meeting_preparation.md` (Vietnamese; made with the project skill `.claude/skills/meeting-preparation`); minutes in `meetings/<date>.md` |
+| Results table | `Reports/experiment_results.xlsx` (was `ketqua_thi_nghiem.xlsx` until 2026-10-28) |

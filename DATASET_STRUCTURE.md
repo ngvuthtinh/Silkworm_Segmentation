@@ -13,6 +13,8 @@ data/
 ├── yolo_bbox/          # Raw data: images + YOLO boxes + disease class (Roboflow export, original split)
 ├── sam3_aug20k_v3/     # ⭐ Per-larva dataset used for training and testing (train / valid / test / valid_real / test_real)
 ├── test/               # 2 dense real photos outside the training domain, for qualitative checks
+├── dense_seg_v2/       # ⭐ dense_seg_v1 + larvae added by a SAM 3 scan (see §2.7)
+├── dense_seg_v1/       # (now in legacy/) Dense multi-larva photos: per-larva polygons, NO disease label (fl.v2i.coco + Silkynet), see §2.7
 └── legacy/             # Older data, kept to reproduce earlier results (see §2.6)
     ├── sam3_seg_v2/    #   Source masks before the SAM 3 rescan (input of the v3 fix)
     ├── sam3_seg_v3/    #   ⭐ Source masks after the SAM 3 rescan (input of sam3_aug20k_v3)
@@ -21,7 +23,9 @@ data/
     ├── sam3_aug20k_v1/ #   Leaky split (approximate rebuild)
     ├── sam3_seg/       #   SAM 3 masks v1 (approximate rebuild)
     ├── mixed_10k/      #   Image-level set with Silkynet (approximate rebuild)
-    └── silkynet_seg/   #   Silkynet images, no longer used
+    ├── silkynet_seg/   #   Silkynet images, no longer used as image-level data; its polygons feed dense_seg_v1
+    ├── fl.v2i.coco/    #   Raw Roboflow "fl" (asiak, CC BY 4.0), COCO polygons: source of dense_seg_v1 (read-only)
+    └── silkworm.v2i.yolov8/ # Raw Roboflow "silkworm" (sicau-wjypc, CC BY 4.0): YOLO boxes + heathly/sick, mosaic-augmented; masked by SAM 3 (text prompt `silkworm`, no box prompt) into data/sam3_seg_silkworm_v2i on 2026-10-28: 2,337 of 2,412 images got masks, 94% of the boxes got a mask; pale/white larvae are often missed; classes are `heathly`=0 / `sick`=1 (reverse of the repo convention, and `sick` is not necessarily Grasserie)
 ```
 
 Lineage: `yolo_bbox` → SAM 3 (+ repair, scene split, ignore regions) → `sam3_seg_v2` → SAM 3 rescan + mask fix → `sam3_seg_v3` → augment → `sam3_aug20k_v3`
@@ -123,6 +127,22 @@ Caveats:
 - `sam3_aug20k_v1`: the first per-larva set, built from `sam3_seg` with the leaky Roboflow split and heavy noise (`GaussNoise` default std of 20–44%). Run `2026-10-03_23-12-56` used it, so its scores are optimistic. `sam3_seg`, `sam3_aug20k_v1` and `mixed_10k` are approximate rebuilds of folders deleted on 2026-10-12.
 - `mixed_10k`: image-level set. Silkynet masks are empty (value 75 thresholded at 127), Silkynet larvae carry a forced `Healthy` label, 31% of images mix both classes under one label, and the test set leaks.
 - `silkynet_seg`: masks use the value 75 instead of 255.
+
+### 2.7. `dense_seg_v1` / `dense_seg_v2`: dense photos, per-larva masks, no disease label
+**`data/dense_seg_v2` is the version to use** (2026-10-28): `data/legacy/dense_seg_v1` plus every larva a SAM 3 scan of all 623 images found and the label lacked (score ≥ 0.7 → added to `masks_inst` as a new larva with a 2 px gap; 0.5–0.7 → `masks_ignore`; `utils/build_dense_seg/apply_sam3_missing.py`, detections in `data/legacy/sam3_scan_dense/all/dets/`). Larvae: train 8,788 → 11,097, valid 554 → 906, test 241 → 323; 420 of 623 images changed. `previews/` shows Ảnh gốc | v1 | v2 for the same 24 images as v1's previews. Still unlabelled: larvae SAM 3 scores below 0.5 (≈ 200 regions between 0.3 and 0.5). Splits and classes are the same as v1.
+
+Built by `utils/build_dense_seg/build_dense_seg_v1.py` for Limitation 2 (photos with very many larvae). Same layout as `sam3_aug20k_v3` (`images/`, `masks/`, `masks_inst/`, `masks_cls/`, `masks_ignore/`), plus `manifest.json`, `README.md`, `previews/`.
+
+| Source | Content | Images | Larvae |
+|---|---|---|---|
+| `data/legacy/fl.v2i.coco` (Roboflow "fl", asiak, CC BY 4.0) | COCO polygons per larva; 272 source photos, each with 3 Roboflow augmented copies (file names end in `_jpg`, `_jpeg` or `_png`); 123 photos have ≥ 10 larvae, 63 have ≥ 20 | 494 train + 40 valid + 20 test | ≈ 7,600 |
+| `data/legacy/silkynet_seg/20221127` (Silkynet, labelme) | 1280×720, ≈ 16 larvae per image, **69 frames of one single scene** → all in `train` | 69 train | 1,129 |
+
+- **`masks_cls = 3` = larva with unknown disease** (`src.dataset_instance.CLS_UNKNOWN`). The dataset returns `disease = -1` there; `InstanceMultiTaskLoss` and `BodyDiseaseLoss` skip those pixels, and `match_instances` never counts a diagnosis on an unknown larva as wrong, so **on this data `e2e_f1` equals `inst_f1`**. Existing data never contains class 3, so earlier scores are unchanged. Without these three changes class 3 would be read as Healthy; do not feed this folder to code that lacks them.
+- Overlapping polygons: the larger one is drawn first, the smaller on top. Larvae whose visible area is < 100/256² of the image (≈ 625 px at 640²) are removed from the label and put in `masks_ignore/`.
+- Split by scene (pixel similarity as in `group_scenes.py`, no SIFT): `valid`/`test` keep **one** copy per source photo. `valid`/`test` are small (40 / 20 images, 554 / 241 larvae), so their scores are noisy; change `--valid-frac` / `--test-frac` and rebuild if needed. Silkynet is a single scene and cannot be evaluated on.
+- ⚠️ **Labels are partial.** In dense photos several visible larvae have no polygon (seen in `fl_219` of the test split), and they are *not* in `masks_ignore/`, so training reads them as background. SAM 3 scan (2026-10-28, `utils/build_dense_seg/check_missing_with_sam3.py`, report in `Reports/Meeting_2026-10-30/results/label_audit/dense_seg_v1_sam3/`): larvae that SAM 3 sees (score ≥ 0.5) but the label lacks are ≈ 27% of all larvae in `test` (12 of 20 images), 40% in `valid`, 23% in `fl` train and 9% in Silkynet; 72% of them touch the image border. Labels are not fixed yet. Treat precision on this data as pessimistic.
+- Not checked: near-duplicates between `fl` and `yolo_bbox` / the old splits, and the license of the Silkynet data (the repo code is GPL-3.0).
 
 ---
 
