@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Dựng data/silkworm_v2i_multi: các ảnh NHIỀU TẰM (>= --min-larvae con) của Roboflow "silkworm" v2 (sicau-wjypc, CC BY 4.0), có nhãn từng con.
+Dựng data/legacy/silkworm_v2i_multi: các ảnh NHIỀU TẰM (>= --min-larvae con) của Roboflow "silkworm" v2 (sicau-wjypc, CC BY 4.0), có nhãn từng con.
 
 Nguồn:
   data/legacy/silkworm.v2i.yolov8/train/{images,labels}      ảnh + hộp gốc (heathly / sick)
-  data/sam3_seg_silkworm_v2i/train/labels                    polygon từng con do SAM 3 tạo từ hộp (lớp lấy từ hộp khớp)
+  data/legacy/sam3_seg_silkworm_v2i/train/labels                    polygon từng con do SAM 3 tạo từ hộp (lớp lấy từ hộp khớp)
 Đầu ra cùng định dạng với sam3_aug20k_v3 (images/, masks/, masks_inst/, masks_cls/, masks_ignore/) + manifest.json, README.md, previews/:
   masks_cls: 1 = sick (KHÔNG healthy, bệnh bất kỳ), 2 = heathly (Healthy)  — cùng quy ước số với repo (1 = lớp bệnh, 2 = Healthy)
   masks_ignore (255): (a) mảnh con quá nhỏ (< 100/256² ảnh); (b) vùng của HỘP GỐC không có mask nào của SAM 3 (con SAM 3 bỏ sót hoặc hộp lệch
                       do mosaic) → không bị học là nền, không tính điểm.
 Bỏ: ảnh rỗng (SAM 3 không ra con nào) và ảnh có < --min-larvae con (ảnh tằm đơn / ít con). Con chồng nhau: con lớn vẽ trước, con nhỏ đè lên.
 
-  python utils/build_v2i_multi/build_v2i_multi.py [--min-larvae 5] [--out data/silkworm_v2i_multi]
+  python utils/build_v2i_multi/build_v2i_multi.py [--min-larvae 5] [--out data/legacy/silkworm_v2i_multi]
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 
 SRC = Path("data/legacy/silkworm.v2i.yolov8/train")
-SAM = Path("data/sam3_seg_silkworm_v2i/train/labels")
+SAM = Path("data/legacy/sam3_seg_silkworm_v2i/train/labels")
 CLS_SICK, CLS_HEALTHY = 1, 2
 YOLO_TO_CLS = {"0": CLS_HEALTHY, "1": CLS_SICK}          # 0 = heathly, 1 = sick (data.yaml của nguồn)
 BOX_COVER = 0.15                                          # hộp được coi là "có mask" nếu >= 15% diện tích hộp đã thuộc một con có nhãn
@@ -38,7 +38,7 @@ def rd(p: Path) -> list[list[str]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="data/silkworm_v2i_multi")
+    ap.add_argument("--out", default="data/legacy/silkworm_v2i_multi")
     ap.add_argument("--min-larvae", type=int, default=5)
     a = ap.parse_args()
     out = Path(a.out)

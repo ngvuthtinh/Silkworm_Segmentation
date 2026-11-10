@@ -9,7 +9,7 @@ Cách làm (không so toàn ảnh vì mosaic ghép nhiều ảnh):
   3. Kiểm chứng từng cặp ứng viên bằng RANSAC (phép đồng dạng: xoay + co giãn + tịnh tiến); cặp có >= --min-inliers điểm đồng nhất là TRÙNG.
   4. Đối chứng độ nhạy: lấy --controls ảnh db, xoay 30° + co 0.7 + cắt rồi dùng làm query; phải tìm lại đúng ảnh gốc.
 
-  python utils/check_dataset_overlap.py --query data/sam3_seg_silkworm_v2i/train/images \
+  python utils/check_dataset_overlap.py --query data/legacy/sam3_seg_silkworm_v2i/train/images \
       --db data/legacy/sam3_seg_v3/train/images data/legacy/sam3_seg_v3/valid/images data/legacy/sam3_seg_v3/test/images \
       --out Reports/Meeting_2026-10-30/results/label_audit/v2i_vs_v3_overlap --gpu 1
 Chỉ ĐỌC data; ghi báo cáo, matches.csv và vài ảnh cặp trùng vào --out.

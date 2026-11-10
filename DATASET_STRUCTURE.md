@@ -25,7 +25,10 @@ data/
     ├── mixed_10k/      #   Image-level set with Silkynet (approximate rebuild)
     ├── silkynet_seg/   #   Silkynet images, no longer used as image-level data; its polygons feed dense_seg_v1
     ├── fl.v2i.coco/    #   Raw Roboflow "fl" (asiak, CC BY 4.0), COCO polygons: source of dense_seg_v1 (read-only)
-    └── silkworm.v2i.yolov8/ # Raw Roboflow "silkworm" (sicau-wjypc, CC BY 4.0): YOLO boxes + heathly/sick, mosaic-augmented; masked by SAM 3 (text prompt `silkworm`, no box prompt) into data/sam3_seg_silkworm_v2i on 2026-10-28: 2,337 of 2,412 images got masks, 94% of the boxes got a mask; pale/white larvae are often missed; classes are `heathly`=0 / `sick`=1 (reverse of the repo convention, and `sick` is not necessarily Grasserie)
+    ├── silkworm.v2i.yolov8/ # Raw Roboflow "silkworm" (sicau-wjypc, CC BY 4.0): YOLO boxes + heathly/sick, mosaic-augmented; masked by SAM 3 (text prompt `silkworm`, no box prompt) into data/legacy/sam3_seg_silkworm_v2i on 2026-10-28: 2,337 of 2,412 images got masks, 94% of the boxes got a mask; pale/white larvae are often missed; classes are `heathly`=0 / `sick`=1 (reverse of the repo convention, and `sick` is not necessarily Grasserie)
+    ├── sam3_seg_silkworm_v2i/ #   SAM 3 masks of the Roboflow "silkworm" set above (not used by any reported run)
+    ├── silkworm_v2i_multi/   #   Its images with ≥ 5 larvae, per-larva masks (utils/build_v2i_multi); option `v2i_multi` of MIX_SOURCES, never used in a reported run
+    └── sam3_scan_v2i/        #   SAM 3 scan working folder for that set (`_input`, `p1`); not used by any run
 ```
 
 Lineage: `yolo_bbox` → SAM 3 (+ repair, scene split, ignore regions) → `sam3_seg_v2` → SAM 3 rescan + mask fix → `sam3_seg_v3` → augment → `sam3_aug20k_v3`

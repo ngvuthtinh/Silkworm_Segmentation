@@ -130,7 +130,7 @@ class InstanceSilkwormDataset(Dataset):
 MIX_SOURCES = {
     "v3": ("data/sam3_aug20k_v3", (0.4, 0.4)),
     "dense_v2": ("data/dense_seg_v2", (0.5, 1.0)),
-    "v2i_multi": ("data/silkworm_v2i_multi", (0.4, 0.8)),
+    "v2i_multi": ("data/legacy/silkworm_v2i_multi", (0.4, 0.8)),
 }
 
 
