@@ -67,7 +67,7 @@ Writing rules, and why:
 - **One change per experiment** is the lab rule (CLAUDE.md §2.5). If an experiment changed architecture and loss together, say so in "Hạn chế".
 - **Always include the two dense photos in `data/test`** for every model (CLAUDE.md §3.3) — they are the standing check for Limitation 2.
 - **Plain Vietnamese, short sentences**, technical terms in English only where the student would say them on a slide (loss, embedding, watershed). Explain what each metric means the first time it appears in a table.
-- **Image links** are relative to the report file and must exist (check with `ls`). Prefer images whose panels carry only names (Ảnh gốc | Mask đáp án | model).
+- **Image links** are relative to the report file and must exist (check with `ls`). Prefer images whose panels carry only names (Ảnh gốc | Ground truth | model).
 - Keep it about the length of the reference reports (~150–250 lines). It is a script for 10–15 minutes of slides, not a thesis chapter.
 
 ## 5. Finish
