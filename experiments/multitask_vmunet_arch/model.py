@@ -20,7 +20,7 @@ import torch.nn.functional as F
 
 from experiments.multitask_vmunet_spatialonly.model import N_BASE, SpatialOnlyVMUNet
 
-__all__ = ["BranchVMUNet", "X0SkipVMUNet", "build_model", "count_params"]
+__all__ = ["AttnVMUNet", "BranchVMUNet", "X0SkipVMUNet", "build_model", "count_params"]
 
 
 def _init_embedding_conv(conv: nn.Conv2d, n_sigma: int) -> None:
@@ -76,8 +76,60 @@ class X0SkipVMUNet(SpatialOnlyVMUNet):
         return _resize_like(h, x)
 
 
+def _sincos_2d(h: int, w: int, dim: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Mã vị trí sin/cos 2D cố định, [h*w, dim]; tính theo cỡ bản đồ nên đổi cỡ ảnh (256² → 512²) vẫn dùng được."""
+    q = dim // 4
+    freq = 1.0 / (10000 ** (torch.arange(q, device=device, dtype=torch.float32) / q))
+    ys, xs = torch.meshgrid(torch.arange(h, device=device, dtype=torch.float32), torch.arange(w, device=device, dtype=torch.float32), indexing="ij")
+    ang_y, ang_x = ys.reshape(-1, 1) * freq, xs.reshape(-1, 1) * freq
+    return torch.cat([ang_y.sin(), ang_y.cos(), ang_x.sin(), ang_x.cos()], dim=1).to(dtype)
+
+
+class GlobalAttnBlock(nn.Module):
+    """Một khối transformer (pre-norm self-attention + MLP) trên bản đồ [B, H, W, C]: mọi vị trí trao đổi thông tin với mọi vị trí.
+    Mã vị trí chỉ cộng vào q, k. Lớp chiếu ra của attention và của MLP khởi tạo = 0 nên lúc bắt đầu khối là phép đồng nhất (mạng khởi động như baseline)."""
+
+    def __init__(self, dim: int, heads: int = 6, mlp_ratio: int = 4):
+        super().__init__()
+        self.norm1, self.norm2 = nn.LayerNorm(dim), nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)
+        self.mlp = nn.Sequential(nn.Linear(dim, dim * mlp_ratio), nn.GELU(), nn.Linear(dim * mlp_ratio, dim))
+        nn.init.zeros_(self.attn.out_proj.weight)
+        nn.init.zeros_(self.attn.out_proj.bias)
+        nn.init.zeros_(self.mlp[2].weight)
+        nn.init.zeros_(self.mlp[2].bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, h, w, c = x.shape
+        t = self.norm1(x).reshape(b, h * w, c)
+        qk = t + _sincos_2d(h, w, c, t.device, t.dtype)
+        x = x + self.attn(qk, qk, t, need_weights=False)[0].reshape(b, h, w, c)
+        return x + self.mlp(self.norm2(x))
+
+
+class AttnVMUNet(SpatialOnlyVMUNet):
+    """Thêm một khối self-attention toàn cục ở bản đồ 16×16×384 (đầu ra `layers_up[1]`, trước khi cộng skip tiếp theo), nơi các mảnh của một con
+    có thể trao đổi thông tin để thống nhất một tâm. Phần còn lại giống baseline."""
+
+    def __init__(self, n_sigma: int = 2, depths: list[int] | None = None, depths_decoder: list[int] | None = None,
+                 drop_path_rate: float = 0.2):
+        super().__init__(n_sigma, depths, depths_decoder, drop_path_rate)
+        self.global_attn = GlobalAttnBlock(384)                                      # kênh của bản đồ 16×16 (dims 96/192/384/768)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        bb = self.backbone
+        h, skip = bb.forward_features(x)
+        for i, layer_up in enumerate(bb.layers_up):
+            h = layer_up(h) if i == 0 else layer_up(h + skip[-i])
+            if i == 1:                                                           # đầu ra tầng decoder thứ hai: 16×16×384
+                h = self.global_attn(h)
+        return _resize_like(bb.forward_final(h), x)
+
+
 def build_model(cfg) -> SpatialOnlyVMUNet:
     args = (cfg.n_sigma, cfg.depths, cfg.depths_decoder, cfg.drop_path_rate)
+    if cfg.arch == "attn":
+        return AttnVMUNet(*args)
     if cfg.arch == "branch":
         return BranchVMUNet(*args)
     if cfg.arch == "x0skip":

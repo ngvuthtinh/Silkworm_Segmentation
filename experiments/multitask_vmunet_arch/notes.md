@@ -13,8 +13,11 @@ Mục tiêu: con bị che từ 3 mảnh trở lên (baseline nhận đúng 73.5%
 | `branch` | 2a | tách decoder: chung tới `layers_up[1]`, rồi 2 tầng decoder cuối + `Final_PatchExpand` nhân đôi. Nhánh chính ra thân/bệnh (2 kênh), nhánh embedding ra offset/σ/seed (5 kênh) | 28.62 M (+1.19 M) |
 | `deep3` | 2b | encoder stage 3 sâu hơn: `depths` [2,2,2,2] → [2,2,4,2] | 29.82 M (+2.39 M) |
 | `x0skip` | 2c | cộng thêm skip 64×64 (`skip_list[0]`, baseline bỏ phí) vào đầu ra tầng decoder cuối | 27.43 M (+0.00 M) |
+| `attn` | 2d | thêm một khối self-attention toàn cục (6 đầu, MLP ×4, mã vị trí sin/cos, khởi tạo = phép đồng nhất) sau `layers_up[1]` (16×16×384) | 29.20 M (+1.77 M) |
 
-`branch` và `x0skip` được cài bằng lớp con của `SpatialOnlyVMUNet` (`model.py`), không sửa `models/vmunet`. Đầu ra luôn `[B, 7, H, W]` nên loss, `split`, suy luận và chấm điểm dùng lại nguyên.
+Kết quả `attn` (một seed, 13/11): nhận đúng con ≥3 mảnh 71.7% (baseline 73.7 ± 0.3%), ảnh dày 512² 0.865 (baseline 0.884 ± 0.005): không cải thiện. Vùng nhìn hiệu dụng của baseline đã phủ 99% cặp mảnh cùng con (`Reports/Meeting_2026-11-13/results/vmunet/analysis/receptive_field.md`).
+
+`branch`, `attn` và `x0skip` được cài bằng lớp con của `SpatialOnlyVMUNet` (`model.py`), không sửa `models/vmunet`. Đầu ra luôn `[B, 7, H, W]` nên loss, `split`, suy luận và chấm điểm dùng lại nguyên.
 Hai nhánh của `branch` khởi tạo bằng sao chép (`deepcopy`) hai tầng decoder cuối đã khởi tạo, nên bắt đầu giống nhau và tách ra khi train.
 
 ## File

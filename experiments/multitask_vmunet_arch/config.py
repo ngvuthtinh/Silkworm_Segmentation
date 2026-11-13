@@ -7,6 +7,7 @@ Kế thừa nguyên `SpatialOnlyConfig`: loss, data, lr, epoch, batch, seed_thr.
     deep3   encoder stage 3 sâu hơn: depths [2,2,2,2] → [2,2,4,2]
     branch  tách decoder: hai tầng decoder cuối + final_up nhân đôi; nhánh 1 ra thân/bệnh, nhánh 2 ra offset/σ/seed
     x0skip  nối skip 64×64 (skip_list[0], baseline bỏ phí) vào đầu ra tầng decoder cuối
+    attn    thêm một khối self-attention toàn cục (6 đầu, MLP ×4, khởi tạo = phép đồng nhất) ở đầu ra layers_up[1] (16×16×384) của decoder
 
 Mỗi lần chỉ đổi MỘT thứ so với baseline.
 """
@@ -19,7 +20,7 @@ from datetime import datetime
 
 from experiments.multitask_vmunet_spatialonly.config import SpatialOnlyConfig
 
-ARCHS = ("base", "deep3", "branch", "x0skip")
+ARCHS = ("base", "deep3", "branch", "x0skip", "attn")
 ARCH_DEPTHS = {"deep3": [2, 2, 4, 2]}            # các arch còn lại dùng depths mặc định [2, 2, 2, 2]
 
 
