@@ -56,6 +56,7 @@ Layout in [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md): `models/` (T1) → `sr
 source .venv/bin/activate   # Python 3.12, torch 2.4.1 + CUDA 12.4, mamba_ssm 2.2.2 (fast selective_scan kernel)
 ```
 - VM-UNet needs the CUDA `selective_scan` kernel from `mamba_ssm`. Without it `vmamba.py` falls back to a pure-PyTorch loop: ~18 s per step instead of ~0.1 s (batch 8, 256²). At startup you must see `[VMAMBA] Fast C++ CUDA selective_scan_fn loaded successfully!`.
+- **No pretrained weights are loaded.** `pretrained_path` in every config points to `models/vmunet/pre_trained_weights/vmamba_small_e238_ema.pth`, but that folder holds only a README, so `load_pretrained` prints "Không có pretrained → train từ đầu" and every run (baseline included) trains from scratch. The published VM-UNet uses ImageNet-pretrained VMamba weights; adding them would be an initialisation change, not an architecture change.
 - torch is pinned to 2.4.1 because prebuilt `mamba_ssm` wheels only exist up to torch 2.4 (the server's `nvcc` 11.3 cannot build it for newer CUDA). Install steps: see README.
 - detectron2 (for `experiments/solov2`, AdelaiDet's SOLOv2) is installed in the same `.venv`, built with `CUDA_HOME=/usr/local/cuda-12.6` (the `nvcc` 11.3 on PATH is too old); AdelaiDet's own CUDA ops are not built (see `experiments/solov2/adet_shim.py`).
 
@@ -107,7 +108,7 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 | Out-of-domain test set | Probably **augmented** images (not decided) | Undecided |
 | "Lightweight" | No target yet (VM-UNet has 27.4 M parameters) | Undecided |
 
-### 3.6. Decisions of meeting 2026-10-30 (keep in sync with `meetings/2026-10-30.md`; next meeting 13/11)
+### 3.6. Decisions of meeting 2026-10-30 (keep in sync with `meetings/2026-10-30.md`; the next meeting, planned for 13/11, was moved to the following week, date not set)
 | Topic | Decision | Status |
 |---|---|---|
 | Direction | Stay on **spatial embedding** (pixels pulled to the larva centre, Neven 2019). No more other models (SOLOv2 etc. stop; they remain only as reference runs) | Decided by the advisor |
@@ -121,6 +122,16 @@ Objects smaller than `min_area` (100 px at 256²) are ignored on both sides (SAM
 | Watershed ablation | `boundary_thr` swept on `valid` (0.2–0.8): `e2e_f1` only 0.740–0.748, so the threshold does not rescue watershed (test 0.746 vs 0.918 for spatial on the same model). **But counted per piece, watershed is not worse** (0.904 vs 0.884–0.886): the gap comes from the one-id-per-larva convention (watershed splits 53 % of 2-piece larvae into ≥ 2 regions). The reason for dropping watershed therefore rests on that convention, to be defended by the task (per-larva diagnosis) **Ảnh dày có đáp án (`dense_seg_v2:test`, 323 con, 512², 10/11):** watershed `inst_f1` 0.733 so với 0.878 của spatial, gộp nhầm 13.9 so với 3.7 trên 100 con, thua cả khi đếm theo từng mảnh (0.725 so với 0.858); ngưỡng chọn trên ảnh dày vẫn 0.2. Đây là bằng chứng cho lý do "watershed gộp đám dính nhau" (`results/vmunet/analysis/watershed_dense.md`). | Measured 9/11, 10/11 |
 
 `split_instances` and the boundary channel stay in the code only to reproduce B1 / E1 / E2 (older reports).
+
+### 3.7. Measured since 30/10 (13–14/11; details in `Reports/Meeting_2026-11-13/meeting_preparation.md`; the advisor has not seen it yet)
+| Topic | Result | Status |
+|---|---|---|
+| Seed noise of the baseline | 3 seeds (`spatialonly_mix`, `arch_base_s1`, `arch_base_s2`): `e2e_f1` test **0.903 ± 0.003**, ≥ 3-piece larvae recognised 73.7 ± 0.3 %, `test_real` 0.983 ± 0.004, labelled dense photos (512²) 0.884 ± 0.005 | Measured |
+| Architecture variants (`experiments/multitask_vmunet_arch`, loss unchanged, one seed each) | `branch` (separate decoder) 0.915, `deep3` (deeper stage 3) 0.914, `attn` (one global self-attention block at 16×16) 0.908 on composed `test`; **none improves real photos or dense photos** (`attn` is worse on dense: 0.865); ≥ 3-piece recognised 77.1 / 75.9 / 71.7 %. `x0skip` not run | Measured |
+| Why architecture does not help | Effective receptive field of the offset output already covers the other pieces of the same larva in 99 % of (piece, piece) pairs, so missing global context is not the main cause; 52 % of the ≥ 3-piece failures and 50 % of the 2-piece failures are pieces pointing to different centres | Measured (gradient shows dependence, not correct use) |
+| Training data | ≥ 3-piece larvae are 7.4 % of the composed training larvae (8.2 % in test), i.e. not rare, but they exist **only in composed images** (real: 1 two-piece larva in 7,128; dense: 0.1 % ≥ 3 pieces) | Measured |
+| Directions from the literature (`Reports/Meeting_2026-11-13/Hướng cải thiện tách con tằm.md`) | A: offsets to the centre of the **whole** larva (full mask is free from copy-paste); B: occlusion-targeted copy-paste; E: pretrained weights. All three are **not architecture changes** (target / data / initialisation), so they need the advisor's approval | Open: to ask the advisor |
+
 
 ---
 

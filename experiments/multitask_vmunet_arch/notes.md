@@ -25,7 +25,7 @@ Hai nhánh của `branch` khởi tạo bằng sao chép (`deepcopy`) hai tầng 
 | File | Việc |
 |---|---|
 | `config.py` | `ArchConfig` = `SpatialOnlyConfig` + `arch` (`deep3` đổi `depths`) |
-| `model.py` | `BranchVMUNet`, `X0SkipVMUNet`, `build_model(cfg)`, `count_params` |
+| `model.py` | `BranchVMUNet`, `X0SkipVMUNet`, `AttnVMUNet` (+ `GlobalAttnBlock`), `build_model(cfg)`, `count_params` |
 | `train.py` | bản sao `spatialonly/train.py` + `--arch`, `--seed` (loss, optimizer, chọn `best.pth` bằng `e2e_f1` giống hệt) |
 | `evaluate.py`, `inference.py` | nạp model theo `arch` trong `config.yaml` của run; `run_eval`, `spatial_instances`, `predict` dùng lại từ spatialonly |
 | `test_arch.py` | kiểm tra không cần data: kích thước đầu ra, số tham số, khởi tạo offset/σ, gradient chạm mọi tham số |
@@ -49,3 +49,16 @@ Mỗi run phải có `--train-mix v3:1 dense_v2:8` (như baseline); nếu quên 
 - Ngưỡng `seed_thr` chọn trên `v3:valid` cho TỪNG run (quy tắc của `eval_mix_models.py`), rồi chấm các tập khác một lần. Baseline dùng 0.9.
 - Nhóm con bị che từ 3 mảnh chỉ có 166 con (sai số khoảng ±3.4 điểm phần trăm): chạy `--arch base` với 2 seed khác để biết nhiễu thật của baseline, rồi mới so các biến thể.
 - Mọi run: kiểm tra 2 ảnh `data/test` (báo cả xác suất kênh thân).
+
+## Kết quả (14/11; `v3:test`, một seed mỗi biến thể; số đầy đủ ở `Reports/Meeting_2026-11-13/results/vmunet/analysis/arch_comparison.md`)
+
+Baseline 3 seed (`spatialonly_mix`, `arch_base_s1`, `arch_base_s2`): `e2e_f1` `test` 0.903 ± 0.003, nhận đúng con ≥3 mảnh 73.7 ± 0.3%, `test_real` 0.983 ± 0.004, ảnh dày 512² 0.884 ± 0.005.
+
+| `--arch` | `e2e_f1` test | ≥3 mảnh nhận đúng | `e2e_f1` test_real | `e2e_f1` ảnh dày 512² |
+|---|---|---|---|---|
+| `branch` | 0.915 | 77.1% | 0.982 | 0.879 |
+| `deep3` | 0.914 | 75.9% | 0.982 | 0.880 |
+| `attn` | 0.908 | 71.7% | 0.986 | 0.865 |
+| `x0skip` | chưa chạy | | | |
+
+Đọc: hai biến thể đầu hơn baseline trên ảnh ghép (vượt nhiễu ±0.003) nhưng không hơn ở ảnh thật và ảnh dày; `attn` không giúp nhóm ≥3 mảnh và kém hơn ở ảnh dày. Vùng nhìn hiệu dụng của baseline đã phủ 99% cặp mảnh cùng con (`receptive_field.md`), nên thiếu ngữ cảnh toàn cục không phải nguyên nhân chính. Mỗi biến thể một seed.
